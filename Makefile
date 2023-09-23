@@ -11,17 +11,20 @@ OBJ         += $(patsubst %.cpp, %.o, $(filter %.cpp, $(SRC)))
 OBJ         += $(patsubst %.s, %.o, $(filter %.s, $(SRC)))
 DEP         := $(OBJ:.o=.d)
 
-CFLAGS      := -Wall -std=c99 -mhard-float -fPIC -marm -nostdinc -I/usr/local/musl/include
-CXXFLAGS    := -Wall -Werror -std=c++0x -mhard-float -fPIC -marm -nostdinc -I/usr/local/musl/include
-LDFLAGS     := -Wl,-no-undefined -static -shared -Wl,--version-script=libc.map -nostdlib
-LDLIBS      := 
+INCLUDEPATHSEXTRA := -I/usr/include -I/usr/include/arm-linux-gnueabihf -I/usr/include/linux -I/usr/lib/gcc/arm-linux-gnueabihf/10/include
+#INCLUDEPATHS := -I/opt/libhybris/include
+#LIBRARYPATHS := -L/opt/libhybris/lib
+CFLAGS      := -Wall -std=c99 -fPIC -marm $(INCLUDEPATHS) $(LIBRARYPATHS)
+CXXFLAGS    := -Wall -Werror -std=c++0x -fPIC -marm $(INCLUDEPATHS) $(LIBRARYPATHS)
+LDFLAGS     := -Wl,-no-undefined -shared -Wl,--hash-style=sysv -Wl,--version-script=libc.map $(LIBRARYPATHS)
+LDLIBS      := -ldl
 
 DEBUG       ?= 0
 VERBOSE     ?= 0
 
 ifeq ($(DEBUG),1)
-	CFLAGS += -O0 -g3 -ggdb -DDEBUG=1
-	CXXFLAGS += -O0 -g3 -ggdb -DDEBUG=1
+	CFLAGS += -O0 -g -DDEBUG=1
+	CXXFLAGS += -O0 -g -DDEBUG=1
 	LDFLAGS +=
 endif
 

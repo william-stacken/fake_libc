@@ -1,12 +1,21 @@
 #include "helpers.h"
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <bits/pthreadtypes.h>
+#include <linux/posix_types.h>
+#include <sys/types.h>
+#include <string.h>
 
 extern "C" {
 
 extern int (*glibc_fprintf)(void *, const char *, ...);
+extern void * (*glibc_fopen)(const char *, const char *);
+extern ssize_t (*glibc_getline)(char **, size_t *, void *);
+extern int (*glibc_fclose)(void *);
+extern int (*glibc_vsscanf)(const char *, const char *, ...);
 extern void **glibc_stderr;
 extern void abort(void);
+void free(void *ptr);
 
 extern long (*glibc_syscall)(long int request, ...);
 
@@ -17,78 +26,121 @@ extern void *pthread_handle;
 
 extern void *setjmp_handle;
 
-extern void *(*glibc_dlsym)(void *handle, const char *name);
+//extern void *(*glibc_dlsym)(void *handle, const char *name);
 
 void *my_dlsym(void *handle, const char *name)
 {
-    return glibc_dlsym(handle, name);
+    return dlsym(handle, name);
 }
 
-#define DISPATCH_GLIBC(f) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
+/*int str_cmp(const char* a, const char* b)
+{
+    int i;
+    for (i = 0; a[i] == b[i] && !a[i]; i++);
+    return !b[i];
+}
+
+void print_string(void *s, int no)
+{
+    int maxlength = 200;
+    int length;
+    char *map;
+    size_t map_len;
+    int name_start = 0, name_end = 0;
+    unsigned long addr_start, addr_end;
+    char perms_str[8];
+    unsigned long _offset;
+    unsigned int _deviceMajor;
+    unsigned int _deviceMinor;
+    unsigned int _inode;
+    int valid_ptr = 0;
+
+    if (!glibc_fopen) glibc_fopen = (void * (*)(const char*, const char*))dlsym(glibc_handle, "fopen");
+    if (!glibc_getline) glibc_getline = (ssize_t (*)(char **, size_t *, void *))dlsym(glibc_handle, "getline");
+    if (!glibc_fclose) glibc_fclose = (int (*)(void *))dlsym(glibc_handle, "fclose");
+    if (!glibc_vsscanf) glibc_vsscanf = (int (*)(const char *, const char *, ...))dlsym(glibc_handle, "vsscanf");
+
+    if (s == NULL)
+        return;
+    void* maps = glibc_fopen("/proc/self/maps", "r");
+    if (maps == 0)
+        return;
+
+    while (glibc_getline(&map, &map_len, (void*)maps) > 0) {
+        glibc_vsscanf(map, "%lx-%lx %7s %lx %u:%u %lu %n%*[^\n]%n",
+                     &addr_start, &addr_end, perms_str, &_offset,
+                     &_deviceMajor, &_deviceMinor, &_inode,
+                     &name_start, &name_end);
+        if ((unsigned long)s >= addr_end || (unsigned long)s < addr_start)
+            continue;
+
+        for (unsigned int i = 0; i < sizeof(perms_str) / sizeof(char); i++) {
+            if (perms_str[i] == 'r') {
+                valid_ptr = 1;
+                break;
+            }
+        }
+        if (!valid_ptr)
+            break;
+    }
+    free(map);
+    glibc_fclose((void*)maps);
+    if (!valid_ptr)
+        return;
+    for (length = 0; (unsigned int)(length + ((char*)s)) < addr_end && ((char*)s)[length] != 0 && length < 200; length++) {
+        if (((char*)s)[length] < ' ')
+            return;
+    }
+    if (length >= maxlength)
+        return;
+    FPRINTF_STDERR("arg%d: \"%s\"\n", no, (char*) s);
+}
+*/
+
+#define DISPATCH(f, glibf, libupper, liblower) \
+    void * f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) __asm__(#f); \
+    void * f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) \
     { \
-        void *ret = my_dlsym(glibc_handle, #f); \
-        assert(ret); \
+        LOAD_ ## libupper(); \
+        FPRINTF_STDERR("%s(%p,%p,%p,%p,%p,%p,%p,%p,%p,%p ...)\n", #f, a, b, c, d, e, u, g, h, i, j); \
+        if (strcmp(#f, "system") == 0) {\
+            FPRINTF_STDERR("cmd: \"%s\"\n", a); \
+        } \
+        void* (*func)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*) =  \
+                     (void* (*)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*))my_dlsym(liblower ## _handle, #glibf); \
+        void* ret = func(a, b, c, d, e, u, g, h, i, j, k, l, m, n, o, p, q, r, s, t); \
+        FPRINTF_STDERR("%s@%p returned %p\n", #glibf, func, ret); \
         return ret; \
     }
-#define DISPATCH_GLIBC2(f, f2) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
-    { \
-        void *ret = my_dlsym(glibc_handle, #f2); \
-        assert(ret); \
-        return ret; \
-    }
-#define DISPATCH_GCC(f) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
-    { \
-        void *ret = my_dlsym(gcc_handle, #f); \
-        assert(ret); \
-        return ret; \
-    }
-#define DISPATCH_RT(f) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
-    { \
-        void *ret = my_dlsym(rt_handle, #f); \
-        assert(ret); \
-        return ret; \
-    }
-#define DISPATCH_PTHREAD(f) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
-    { \
-        void *ret = my_dlsym(pthread_handle, #f); \
-        assert(ret); \
-        return ret; \
-    }
+
+#define DISPATCH_GLIBC(f)          DISPATCH(f, f, GLIBC, glibc)
+#define DISPATCH_GLIBC2(f, glibf)  DISPATCH(f, glibf, GLIBC, glibc)
+#define DISPATCH_GCC(f)            DISPATCH(f, f, GCC, gcc)
+#define DISPATCH_RT(f)             DISPATCH(f, f, RT, rt)
+#define DISPATCH_PTHREAD(f)        DISPATCH(f, f, PTHREAD, pthread)
 extern void init_setjmp();
 #define DISPATCH_SETJMP(f) \
-    __asm__(".type " #f ", %gnu_indirect_function"); \
-    void * f ## _dispatch(void) __asm__(#f); \
-    void * f ## _dispatch(void) \
+    void * f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) __asm__(#f); \
+    void * f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) \
     { \
         init_setjmp(); \
-        void *ret = my_dlsym(setjmp_handle, STRINGIFY(my_##f)); \
-        assert(ret); \
+        FPRINTF_STDERR("%s(%p,%p,%p,%p,%p,%p,%p,%p,%p,%p ...)\n", #f, a, b, c, d, e, u, g, h, i, j); \
+        void* (*func)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*) =  \
+                     (void* (*)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*))my_dlsym(setjmp_handle, STRINGIFY(my_##f)); \
+        void* ret = func(a, b, c, d, e, u, g, h, i, j, k, l, m, n, o, p, q, r, s, t); \
+        FPRINTF_STDERR("%s@%p returned %p\n", #f, func, ret); \
         return ret; \
     }
 
 #define DUMMY(f) \
-    void f(void) \
+    void f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) __asm__(#f); \
+    void f ## _dispatch(void* a, void* b, void* c, void* d, void* e, void* u, void* g, void* h, void* i, void* j, void* k, void* l, void* m, void* n, void* o, void* p, void* q, void* r, void* s, void* t) \
     { \
-        glibc_fprintf(*glibc_stderr, "called a dummy function: %s\n", #f); \
+        FPRINTF_STDERR("@@@@@@@ DUMMY FUNCTION: %s(%p,%p,%p,%p,%p,%p,%p,%p,%p,%p ...)\n", #f, a, b, c, d, e, u, g, h, i, j); \
     }
 /*
 
-//DISPATCH_GLIBC(readdir_r);
+DUMMY(readdir_r);
 
 */
 
@@ -102,14 +154,14 @@ DISPATCH_GLIBC(__aeabi_memmove);
 DISPATCH_GLIBC(__aeabi_atexit);
 
 // ALL
-//DISPATCH_GLIBC(___Unwind_Backtrace);
-//DISPATCH_GLIBC(___Unwind_ForcedUnwind);
-//DISPATCH_GLIBC(___Unwind_RaiseException);
-//DISPATCH_GLIBC(___Unwind_Resume);
-//DISPATCH_GLIBC(___Unwind_Resume_or_Rethrow);
-//DISPATCH_GLIBC(__accept4);
-//DISPATCH_GLIBC(__adddf3);
-//DISPATCH_GLIBC(__addsf3);
+DUMMY(___Unwind_Backtrace);
+DUMMY(___Unwind_ForcedUnwind);
+DUMMY(___Unwind_RaiseException);
+DUMMY(___Unwind_Resume);
+DUMMY(___Unwind_Resume_or_Rethrow);
+DUMMY(__accept4);
+DUMMY(__adddf3);
+DUMMY(__addsf3);
 DISPATCH_GCC(__aeabi_cdcmpeq);
 DISPATCH_GCC(__aeabi_cdcmple);
 DISPATCH_GCC(__aeabi_cdrcmple);
@@ -167,367 +219,367 @@ DISPATCH_GCC(__aeabi_uldivmod);
 DISPATCH_GCC(__aeabi_unwind_cpp_pr0);
 DISPATCH_GCC(__aeabi_unwind_cpp_pr1);
 DISPATCH_GCC(__aeabi_unwind_cpp_pr2);
-//DISPATCH_GLIBC(__arm_fadvise64_64);
-//DISPATCH_GLIBC(__ashldi3);
-//DISPATCH_GLIBC(__ashrdi3);
-//DISPATCH_GLIBC(__bionic_brk);
-//DISPATCH_GLIBC(__bionic_libgcc_compat_symbols);
-//DISPATCH_GLIBC(__bionic_libgcc_unwind_symbols);
-//DISPATCH_GLIBC(__dso_handle);
-//DISPATCH_GLIBC(__gnu_Unwind_Backtrace);
-//DISPATCH_GLIBC(__gnu_unwind_execute);
+DUMMY(__arm_fadvise64_64);
+DUMMY(__ashldi3);
+DUMMY(__ashrdi3);
+DUMMY(__bionic_brk);
+DUMMY(__bionic_libgcc_compat_symbols);
+DUMMY(__bionic_libgcc_unwind_symbols);
+//DUMMY(__dso_handle);
+DUMMY(__gnu_Unwind_Backtrace);
+DUMMY(__gnu_unwind_execute);
 DISPATCH_GLIBC(__gnu_Unwind_Find_exidx);
-//DISPATCH_GLIBC(__gnu_Unwind_ForcedUnwind);
-//DISPATCH_GLIBC(__gnu_unwind_frame);
-//DISPATCH_GLIBC(__gnu_Unwind_RaiseException);
-//DISPATCH_GLIBC(__gnu_Unwind_Restore_VFP);
-//DISPATCH_GLIBC(__gnu_Unwind_Restore_VFP_D);
-//DISPATCH_GLIBC(__gnu_Unwind_Restore_VFP_D_16_to_31);
-//DISPATCH_GLIBC(__gnu_Unwind_Restore_WMMXC);
-//DISPATCH_GLIBC(__gnu_Unwind_Restore_WMMXD);
-//DISPATCH_GLIBC(__gnu_Unwind_Resume);
-//DISPATCH_GLIBC(__gnu_Unwind_Resume_or_Rethrow);
-//DISPATCH_GLIBC(__gnu_Unwind_Save_VFP);
-//DISPATCH_GLIBC(__gnu_Unwind_Save_VFP_D);
-//DISPATCH_GLIBC(__gnu_Unwind_Save_VFP_D_16_to_31);
-//DISPATCH_GLIBC(__gnu_Unwind_Save_WMMXC);
-//DISPATCH_GLIBC(__gnu_Unwind_Save_WMMXD);
-//DISPATCH_GLIBC(_Unwind_Backtrace);
-//DISPATCH_GLIBC(_Unwind_Complete);
-//DISPATCH_GLIBC(_Unwind_DeleteException);
-//DISPATCH_GLIBC(_Unwind_ForcedUnwind);
-//DISPATCH_GLIBC(_Unwind_GetCFA);
-//DISPATCH_GLIBC(_Unwind_GetDataRelBase);
-//DISPATCH_GLIBC(_Unwind_GetLanguageSpecificData);
-//DISPATCH_GLIBC(_Unwind_GetRegionStart);
-//DISPATCH_GLIBC(_Unwind_GetTextRelBase);
-//DISPATCH_GLIBC(_Unwind_RaiseException);
-//DISPATCH_GLIBC(_Unwind_Resume);
-//DISPATCH_GLIBC(_Unwind_Resume_or_Rethrow);
-//DISPATCH_GLIBC(_Unwind_VRS_Get);
-//DISPATCH_GLIBC(_Unwind_VRS_Pop);
-//DISPATCH_GLIBC(_Unwind_VRS_Set);
-//DISPATCH_GLIBC(atexit);
-//DISPATCH_GLIBC(dlmalloc);
-//DISPATCH_GLIBC(dlmalloc_inspect_all);
-//DISPATCH_GLIBC(dlmalloc_trim);
-//DISPATCH_GLIBC(dlmalloc_usable_size);
-//DISPATCH_GLIBC(gMallocLeakZygoteChild);
-//DISPATCH_GLIBC(SHA1Final);
-//DISPATCH_GLIBC(SHA1Init);
-//DISPATCH_GLIBC(SHA1Transform);
-//DISPATCH_GLIBC(SHA1Update);
+DUMMY(__gnu_Unwind_ForcedUnwind);
+DUMMY(__gnu_unwind_frame);
+DUMMY(__gnu_Unwind_RaiseException);
+DUMMY(__gnu_Unwind_Restore_VFP);
+DUMMY(__gnu_Unwind_Restore_VFP_D);
+DUMMY(__gnu_Unwind_Restore_VFP_D_16_to_31);
+DUMMY(__gnu_Unwind_Restore_WMMXC);
+DUMMY(__gnu_Unwind_Restore_WMMXD);
+DUMMY(__gnu_Unwind_Resume);
+DUMMY(__gnu_Unwind_Resume_or_Rethrow);
+DUMMY(__gnu_Unwind_Save_VFP);
+DUMMY(__gnu_Unwind_Save_VFP_D);
+DUMMY(__gnu_Unwind_Save_VFP_D_16_to_31);
+DUMMY(__gnu_Unwind_Save_WMMXC);
+DUMMY(__gnu_Unwind_Save_WMMXD);
+DUMMY(_Unwind_Backtrace);
+DUMMY(_Unwind_Complete);
+DUMMY(_Unwind_DeleteException);
+DUMMY(_Unwind_ForcedUnwind);
+DUMMY(_Unwind_GetCFA);
+DUMMY(_Unwind_GetDataRelBase);
+DUMMY(_Unwind_GetLanguageSpecificData);
+DUMMY(_Unwind_GetRegionStart);
+DUMMY(_Unwind_GetTextRelBase);
+DUMMY(_Unwind_RaiseException);
+DUMMY(_Unwind_Resume);
+DUMMY(_Unwind_Resume_or_Rethrow);
+DUMMY(_Unwind_VRS_Get);
+DUMMY(_Unwind_VRS_Pop);
+DUMMY(_Unwind_VRS_Set);
+DUMMY(atexit);
+DUMMY(dlmalloc);
+DUMMY(dlmalloc_inspect_all);
+DUMMY(dlmalloc_trim);
+DUMMY(dlmalloc_usable_size);
+DUMMY(gMallocLeakZygoteChild);
+DUMMY(SHA1Final);
+DUMMY(SHA1Init);
+DUMMY(SHA1Transform);
+DUMMY(SHA1Update);
 
 DISPATCH_GLIBC(__assert);
-//DISPATCH_GLIBC(__assert2);
-//DISPATCH_GLIBC(__atomic_cmpxchg);
-//DISPATCH_GLIBC(__atomic_dec);
-//DISPATCH_GLIBC(__atomic_inc);
-//DISPATCH_GLIBC(__atomic_swap);
-//DISPATCH_GLIBC(__b64_ntop);
-//DISPATCH_GLIBC(__b64_pton);
-//DISPATCH_GLIBC(__brk);
-//DISPATCH_GLIBC(__cmpdf2);
-//DISPATCH_GLIBC(__cmsg_nxthdr);
-//DISPATCH_GLIBC(__connect);
+//DUMMY(__assert2);
+DUMMY(__atomic_cmpxchg);
+DUMMY(__atomic_dec);
+DUMMY(__atomic_inc);
+DUMMY(__atomic_swap);
+DUMMY(__b64_ntop);
+DUMMY(__b64_pton);
+DUMMY(__brk);
+DUMMY(__cmpdf2);
+DUMMY(__cmsg_nxthdr);
+DUMMY(__connect);
 DISPATCH_GLIBC(__ctype_get_mb_cur_max);
 DISPATCH_GLIBC(__cxa_atexit);
-//DISPATCH_GLIBC(__cxa_finalize);
+//DUMMY(__cxa_finalize);
 DISPATCH_GLIBC(__cxa_thread_atexit_impl);
-//DISPATCH_GLIBC(__divdf3);
-//DISPATCH_GLIBC(__divdi3);
-//DISPATCH_GLIBC(__divsf3);
-//DISPATCH_GLIBC(__divsi3);
-//DISPATCH_GLIBC(__dn_comp);
-//DISPATCH_GLIBC(__dn_count_labels);
-//DISPATCH_GLIBC(__dn_skipname);
-//DISPATCH_GLIBC(__epoll_pwait);
-//DISPATCH_GLIBC(__eqdf2);
+DUMMY(__divdf3);
+DUMMY(__divdi3);
+DUMMY(__divsf3);
+DUMMY(__divsi3);
+DUMMY(__dn_comp);
+DUMMY(__dn_count_labels);
+DUMMY(__dn_skipname);
+DUMMY(__epoll_pwait);
+DUMMY(__eqdf2);
 DISPATCH_GLIBC2(__errno, __errno_location);
 DUMMY(__exit);
-//DISPATCH_GLIBC(__extendsfdf2);
-//DISPATCH_GLIBC(__fadvise64);
-//DISPATCH_GLIBC(__fbufsize);
-//DISPATCH_GLIBC(__fcntl64);
-//DISPATCH_GLIBC(__FD_CLR_chk);
-//DISPATCH_GLIBC(__FD_ISSET_chk);
-//DISPATCH_GLIBC(__FD_SET_chk);
-//DISPATCH_GLIBC(__fgets_chk);
-//DISPATCH_GLIBC(__fixdfsi);
-//DISPATCH_GLIBC(__fixsfsi);
-//DISPATCH_GLIBC(__fixunssfsi);
-//DISPATCH_GLIBC(__flbf);
-//DISPATCH_GLIBC(__floatdidf);
-//DISPATCH_GLIBC(__floatdisf);
-//DISPATCH_GLIBC(__floatsidf);
-//DISPATCH_GLIBC(__floatsisf);
-//DISPATCH_GLIBC(__floatundidf);
-//DISPATCH_GLIBC(__floatundisf);
-//DISPATCH_GLIBC(__floatunsidf);
-//DISPATCH_GLIBC(__floatunsisf);
-//DISPATCH_GLIBC(__fp_nquery);
-//DISPATCH_GLIBC(__fp_query);
-//DISPATCH_GLIBC(__fpclassify);
-//DISPATCH_GLIBC(__fpclassifyd);
-//DISPATCH_GLIBC(__fpclassifyf);
-//DISPATCH_GLIBC(__fpclassifyl);
-//DISPATCH_GLIBC(__fpending);
-//DISPATCH_GLIBC(__fpurge);
-//DISPATCH_GLIBC(__freadable);
-//DISPATCH_GLIBC(__fsetlocking);
-//DISPATCH_GLIBC(__fstatfs64);
-//DISPATCH_GLIBC(__futex_wait);
-//DISPATCH_GLIBC(__futex_wake);
-//DISPATCH_GLIBC(__fwritable);
-//DISPATCH_GLIBC(__gedf2);
-//DISPATCH_GLIBC(__get_h_errno);
-//DISPATCH_GLIBC(__get_thread);
-//DISPATCH_GLIBC(__get_tls);
-//DISPATCH_GLIBC(__getcpu);
-//DISPATCH_GLIBC(__getcwd);
-//DISPATCH_GLIBC(__getdents64);
-//DISPATCH_GLIBC(__getpid);
-//DISPATCH_GLIBC(__getpriority);
+DUMMY(__extendsfdf2);
+DUMMY(__fadvise64);
+DUMMY(__fbufsize);
+DUMMY(__fcntl64);
+//DUMMY(__FD_CLR_chk);
+//DUMMY(__FD_ISSET_chk);
+//DUMMY(__FD_SET_chk);
+DUMMY(__fgets_chk);
+DUMMY(__fixdfsi);
+DUMMY(__fixsfsi);
+DUMMY(__fixunssfsi);
+DUMMY(__flbf);
+DUMMY(__floatdidf);
+DUMMY(__floatdisf);
+DUMMY(__floatsidf);
+DUMMY(__floatsisf);
+DUMMY(__floatundidf);
+DUMMY(__floatundisf);
+DUMMY(__floatunsidf);
+DUMMY(__floatunsisf);
+DUMMY(__fp_nquery);
+DUMMY(__fp_query);
+DUMMY(__fpclassify);
+DUMMY(__fpclassifyd);
+DUMMY(__fpclassifyf);
+DUMMY(__fpclassifyl);
+DUMMY(__fpending);
+DUMMY(__fpurge);
+DUMMY(__freadable);
+DUMMY(__fsetlocking);
+DUMMY(__fstatfs64);
+DUMMY(__futex_wait);
+DUMMY(__futex_wake);
+DUMMY(__fwritable);
+DUMMY(__gedf2);
+//DUMMY(__get_h_errno);
+DUMMY(__get_thread);
+DUMMY(__get_tls);
+DUMMY(__getcpu);
+DUMMY(__getcwd);
+DUMMY(__getdents64);
+DUMMY(__getpid);
+DUMMY(__getpriority);
 DISPATCH_GLIBC2(__gnu_basename, basename); // TODO
-//DISPATCH_GLIBC(__gnu_ldivmod_helper);
+DUMMY(__gnu_ldivmod_helper);
 DISPATCH_GLIBC2(__gnu_strerror_r, strerror_r); // TODO
-//DISPATCH_GLIBC(__gnu_uldivmod_helper);
-//DISPATCH_GLIBC(__gtdf2);
-//DISPATCH_GLIBC(__hostalias);
-//DISPATCH_GLIBC(__ioctl);
-//DISPATCH_GLIBC(__isfinite);
-//DISPATCH_GLIBC(__isfinitef);
-//DISPATCH_GLIBC(__isfinitel);
-//DISPATCH_GLIBC(__isinf);
-//DISPATCH_GLIBC(__isinff);
-//DISPATCH_GLIBC(__isinfl);
-//DISPATCH_GLIBC(__isnan);
-//DISPATCH_GLIBC(__isnanf);
-//DISPATCH_GLIBC(__isnanl);
-//DISPATCH_GLIBC(__isnormal);
-//DISPATCH_GLIBC(__isnormalf);
-//DISPATCH_GLIBC(__isnormall);
-//DISPATCH_GLIBC(__isthreaded);
-//DISPATCH_GLIBC(__ledf2);
-//DISPATCH_GLIBC(__libc_current_sigrtmax);
-//DISPATCH_GLIBC(__libc_current_sigrtmin);
-//DISPATCH_GLIBC(__libc_init);
-//DISPATCH_GLIBC(__llseek);
-//DISPATCH_GLIBC(__loc_aton);
-//DISPATCH_GLIBC(__loc_ntoa);
-//DISPATCH_GLIBC(__lshrdi3);
-//DISPATCH_GLIBC(__ltdf2);
+DUMMY(__gnu_uldivmod_helper);
+DUMMY(__gtdf2);
+DUMMY(__hostalias);
+DUMMY(__ioctl);
+//DUMMY(__isfinite);
+//DUMMY(__isfinitef);
+DUMMY(__isfinitel);
+//DUMMY(__isinf);
+//DUMMY(__isinff);
+DUMMY(__isinfl);
+//DUMMY(__isnan);
+//DUMMY(__isnanf);
+DUMMY(__isnanl);
+//DUMMY(__isnormal);
+//DUMMY(__isnormalf);
+DUMMY(__isnormall);
+DUMMY(__isthreaded);
+DUMMY(__ledf2);
+DUMMY(__libc_current_sigrtmax);
+DUMMY(__libc_current_sigrtmin);
+DUMMY(__libc_init);
+DUMMY(__llseek);
+DUMMY(__loc_aton);
+DUMMY(__loc_ntoa);
+DUMMY(__lshrdi3);
+DUMMY(__ltdf2);
 DISPATCH_GLIBC2(__memchr_chk, memchr); // TODO
 DISPATCH_GLIBC(__memcpy_chk);
 DISPATCH_GLIBC(__memmove_chk);
 DISPATCH_GLIBC(__memrchr_chk);
 DISPATCH_GLIBC(__memset_chk);
-//DISPATCH_GLIBC(__mmap2);
-//DISPATCH_GLIBC(__moddi3);
-//DISPATCH_GLIBC(__muldf3);
-//DISPATCH_GLIBC(__muldi3);
-//DISPATCH_GLIBC(__mulsf3);
-//DISPATCH_GLIBC(__nedf2);
-//DISPATCH_GLIBC(__ns_format_ttl);
-//DISPATCH_GLIBC(__ns_get16);
-//DISPATCH_GLIBC(__ns_get32);
-//DISPATCH_GLIBC(__ns_initparse);
-//DISPATCH_GLIBC(__ns_makecanon);
-//DISPATCH_GLIBC(__ns_msg_getflag);
-//DISPATCH_GLIBC(__ns_name_compress);
-//DISPATCH_GLIBC(__ns_name_ntol);
-//DISPATCH_GLIBC(__ns_name_ntop);
-//DISPATCH_GLIBC(__ns_name_pack);
-//DISPATCH_GLIBC(__ns_name_pton);
-//DISPATCH_GLIBC(__ns_name_rollback);
-//DISPATCH_GLIBC(__ns_name_skip);
-//DISPATCH_GLIBC(__ns_name_uncompress);
-//DISPATCH_GLIBC(__ns_name_unpack);
-//DISPATCH_GLIBC(__ns_parserr);
-//DISPATCH_GLIBC(__ns_put16);
-//DISPATCH_GLIBC(__ns_put32);
-//DISPATCH_GLIBC(__ns_samename);
-//DISPATCH_GLIBC(__ns_skiprr);
-//DISPATCH_GLIBC(__ns_sprintrr);
-//DISPATCH_GLIBC(__ns_sprintrrf);
-//DISPATCH_GLIBC(__open);
+DUMMY(__mmap2);
+DUMMY(__moddi3);
+DUMMY(__muldf3);
+DUMMY(__muldi3);
+DUMMY(__mulsf3);
+DUMMY(__nedf2);
+DUMMY(__ns_format_ttl);
+DUMMY(__ns_get16);
+DUMMY(__ns_get32);
+DUMMY(__ns_initparse);
+DUMMY(__ns_makecanon);
+DUMMY(__ns_msg_getflag);
+DUMMY(__ns_name_compress);
+DUMMY(__ns_name_ntol);
+DUMMY(__ns_name_ntop);
+DUMMY(__ns_name_pack);
+DUMMY(__ns_name_pton);
+DUMMY(__ns_name_rollback);
+DUMMY(__ns_name_skip);
+DUMMY(__ns_name_uncompress);
+DUMMY(__ns_name_unpack);
+DUMMY(__ns_parserr);
+DUMMY(__ns_put16);
+DUMMY(__ns_put32);
+DUMMY(__ns_samename);
+DUMMY(__ns_skiprr);
+DUMMY(__ns_sprintrr);
+DUMMY(__ns_sprintrrf);
+DUMMY(__open);
 DISPATCH_GLIBC(__open_2);
-//DISPATCH_GLIBC(__openat);
-//DISPATCH_GLIBC(__openat_2);
-//DISPATCH_GLIBC(__p_cdname);
-//DISPATCH_GLIBC(__p_cdnname);
-//DISPATCH_GLIBC(__p_class);
-//DISPATCH_GLIBC(__p_class_syms);
-//DISPATCH_GLIBC(__p_fqname);
-//DISPATCH_GLIBC(__p_fqnname);
-//DISPATCH_GLIBC(__p_option);
-//DISPATCH_GLIBC(__p_query);
-//DISPATCH_GLIBC(__p_rcode);
-//DISPATCH_GLIBC(__p_secstodate);
-//DISPATCH_GLIBC(__p_time);
-//DISPATCH_GLIBC(__p_type);
-//DISPATCH_GLIBC(__p_type_syms);
-//DISPATCH_GLIBC(__page_shift);
-//DISPATCH_GLIBC(__page_size);
-//DISPATCH_GLIBC(__poll_chk);
+DUMMY(__openat);
+DUMMY(__openat_2);
+DUMMY(__p_cdname);
+DUMMY(__p_cdnname);
+DUMMY(__p_class);
+DUMMY(__p_class_syms);
+DUMMY(__p_fqname);
+DUMMY(__p_fqnname);
+DUMMY(__p_option);
+DUMMY(__p_query);
+DUMMY(__p_rcode);
+DUMMY(__p_secstodate);
+DUMMY(__p_time);
+DUMMY(__p_type);
+DUMMY(__p_type_syms);
+DUMMY(__page_shift);
+DUMMY(__page_size);
+DUMMY(__poll_chk);
 DUMMY(__popcount_tab);
 DUMMY(__popcountsi2);
-//DISPATCH_GLIBC(__ppoll);
-//DISPATCH_GLIBC(__ppoll_chk);
-//DISPATCH_GLIBC(__pread64_chk);
-//DISPATCH_GLIBC(__pread_chk);
-//DISPATCH_GLIBC(__progname);
-//DISPATCH_GLIBC(__pselect6);
-//DISPATCH_GLIBC(__pthread_cleanup_pop);
-//DISPATCH_GLIBC(__pthread_cleanup_push);
-//DISPATCH_GLIBC(__pthread_gettid);
-//DISPATCH_GLIBC(__ptrace);
-//DISPATCH_GLIBC(__putlong);
-//DISPATCH_GLIBC(__putshort);
+DUMMY(__ppoll);
+DUMMY(__ppoll_chk);
+DUMMY(__pread64_chk);
+DUMMY(__pread_chk);
+//DUMMY(__progname);
+DUMMY(__pselect6);
+DUMMY(__pthread_cleanup_pop);
+DUMMY(__pthread_cleanup_push);
+//DUMMY(__pthread_gettid);
+DUMMY(__ptrace);
+DUMMY(__putlong);
+DUMMY(__putshort);
 DISPATCH_GLIBC(__read_chk);
-//DISPATCH_GLIBC(__readlink_chk);
-//DISPATCH_GLIBC(__readlinkat_chk);
-//DISPATCH_GLIBC(__reboot);
+DUMMY(__readlink_chk);
+DUMMY(__readlinkat_chk);
+DUMMY(__reboot);
 DISPATCH_GLIBC(__recvfrom_chk);
 DISPATCH_GLIBC(__register_atfork);
-//DISPATCH_GLIBC(__res_close);
-//DISPATCH_GLIBC(__res_dnok);
-//DISPATCH_GLIBC(__res_hnok);
-//DISPATCH_GLIBC(__res_hostalias);
-//DISPATCH_GLIBC(__res_isourserver);
-//DISPATCH_GLIBC(__res_mailok);
-//DISPATCH_GLIBC(__res_nameinquery);
-//DISPATCH_GLIBC(__res_nclose);
-//DISPATCH_GLIBC(__res_ninit);
-//DISPATCH_GLIBC(__res_nmkquery);
-//DISPATCH_GLIBC(__res_nquery);
-//DISPATCH_GLIBC(__res_nquerydomain);
-//DISPATCH_GLIBC(__res_nsearch);
-//DISPATCH_GLIBC(__res_nsend);
-//DISPATCH_GLIBC(__res_ownok);
-//DISPATCH_GLIBC(__res_queriesmatch);
-//DISPATCH_GLIBC(__res_querydomain);
-//DISPATCH_GLIBC(__res_send);
-//DISPATCH_GLIBC(__res_send_setqhook);
-//DISPATCH_GLIBC(__res_send_setrhook);
-//DISPATCH_GLIBC(__restore_core_regs);
-//DISPATCH_GLIBC(__rt_sigaction);
-//DISPATCH_GLIBC(__rt_sigpending);
-//DISPATCH_GLIBC(__rt_sigprocmask);
-//DISPATCH_GLIBC(__rt_sigsuspend);
-//DISPATCH_GLIBC(__rt_sigtimedwait);
-//DISPATCH_GLIBC(__sched_cpualloc);
-//DISPATCH_GLIBC(__sched_cpucount);
-//DISPATCH_GLIBC(__sched_cpufree);
-//DISPATCH_GLIBC(__sched_getaffinity);
-//DISPATCH_GLIBC(__sclose);
-//DISPATCH_GLIBC(__sdidinit);
-//DISPATCH_GLIBC(__set_errno);
-//DISPATCH_GLIBC(__set_thread_area);
-//DISPATCH_GLIBC(__set_tid_address);
-//DISPATCH_GLIBC(__set_tls);
-//DISPATCH_GLIBC(__sF);
-//DISPATCH_GLIBC(__sflags);
-//DISPATCH_GLIBC(__sflush);
-//DISPATCH_GLIBC(__sfp);
-//DISPATCH_GLIBC(__sglue);
+DUMMY(__res_close);
+DUMMY(__res_dnok);
+DUMMY(__res_hnok);
+DUMMY(__res_hostalias);
+DUMMY(__res_isourserver);
+DUMMY(__res_mailok);
+DUMMY(__res_nameinquery);
+DUMMY(__res_nclose);
+DUMMY(__res_ninit);
+DUMMY(__res_nmkquery);
+DUMMY(__res_nquery);
+DUMMY(__res_nquerydomain);
+DUMMY(__res_nsearch);
+DUMMY(__res_nsend);
+DUMMY(__res_ownok);
+DUMMY(__res_queriesmatch);
+DUMMY(__res_querydomain);
+DUMMY(__res_send);
+DUMMY(__res_send_setqhook);
+DUMMY(__res_send_setrhook);
+DUMMY(__restore_core_regs);
+DUMMY(__rt_sigaction);
+//DUMMY(__rt_sigpending);
+//DUMMY(__rt_sigprocmask);
+//DUMMY(__rt_sigsuspend);
+//DUMMY(__rt_sigtimedwait);
+DUMMY(__sched_cpualloc);
+DUMMY(__sched_cpucount);
+DUMMY(__sched_cpufree);
+DUMMY(__sched_getaffinity);
+DUMMY(__sclose);
+DUMMY(__sdidinit);
+DUMMY(__set_errno);
+DUMMY(__set_thread_area);
+DUMMY(__set_tid_address);
+DUMMY(__set_tls);
+//DUMMY(__sF);
+DUMMY(__sflags);
+DUMMY(__sflush);
+DUMMY(__sfp);
+DUMMY(__sglue);
 DISPATCH_GLIBC(__sigaction);
-//DISPATCH_GLIBC(__signalfd4);
-//DISPATCH_GLIBC(__sinit);
-//DISPATCH_GLIBC(__smakebuf);
-//DISPATCH_GLIBC(__snprintf_chk);
-//DISPATCH_GLIBC(__socket);
-//DISPATCH_GLIBC(__sprintf_chk);
-//DISPATCH_GLIBC(__sread);
-//DISPATCH_GLIBC(__srefill);
-//DISPATCH_GLIBC(__srget);
-//DISPATCH_GLIBC(__sseek);
+//DUMMY(__signalfd4);
+DUMMY(__sinit);
+DUMMY(__smakebuf);
+//DUMMY(__snprintf_chk);
+DUMMY(__socket);
+//DUMMY(__sprintf_chk);
+DUMMY(__sread);
+DUMMY(__srefill);
+DUMMY(__srget);
+DUMMY(__sseek);
 DISPATCH_GLIBC(__stack_chk_fail);
-//DISPATCH_GLIBC(__stack_chk_guard);
-//DISPATCH_GLIBC(__statfs64);
+//DUMMY(__stack_chk_guard);
+DUMMY(__statfs64);
 DISPATCH_GLIBC(__stpcpy_chk);
-//DISPATCH_GLIBC(__stpncpy_chk);
-//DISPATCH_GLIBC(__stpncpy_chk2);
+DUMMY(__stpncpy_chk);
+DUMMY(__stpncpy_chk2);
 DISPATCH_GLIBC(__strcat_chk);
 DISPATCH_GLIBC2(__strchr_chk, strchr); // TODO
 DISPATCH_GLIBC(__strcpy_chk);
-//DISPATCH_GLIBC(__strlcat_chk);
-//DISPATCH_GLIBC(__strlcpy_chk);
+//DUMMY(__strlcat_chk);
+//DUMMY(__strlcpy_chk);
 DISPATCH_GLIBC2(__strlen_chk, strlen); // TODO
 DISPATCH_GLIBC(__strncat_chk);
 DISPATCH_GLIBC(__strncpy_chk);
-//DISPATCH_GLIBC(__strncpy_chk2);
+//DUMMY(__strncpy_chk2);
 DISPATCH_GLIBC2(__strrchr_chk, strrchr); // TODO
-//DISPATCH_GLIBC(__subdf3);
-//DISPATCH_GLIBC(__subsf3);
-//DISPATCH_GLIBC(__swbuf);
-//DISPATCH_GLIBC(__swrite);
-//DISPATCH_GLIBC(__swsetup);
-//DISPATCH_GLIBC(__sym_ntop);
-//DISPATCH_GLIBC(__sym_ntos);
-//DISPATCH_GLIBC(__sym_ston);
-//DISPATCH_GLIBC(__system_properties_init);
-//DISPATCH_GLIBC(__system_property_add);
-//DISPATCH_GLIBC(__system_property_area__);
-//DISPATCH_GLIBC(__system_property_area_init);
-//DISPATCH_GLIBC(__system_property_area_serial);
-//DISPATCH_GLIBC(__system_property_find);
-//DISPATCH_GLIBC(__system_property_find_nth);
-//DISPATCH_GLIBC(__system_property_foreach);
-//DISPATCH_GLIBC(__system_property_get);
-//DISPATCH_GLIBC(__system_property_read);
-//DISPATCH_GLIBC(__system_property_serial);
-//DISPATCH_GLIBC(__system_property_set);
-//DISPATCH_GLIBC(__system_property_set_filename);
-//DISPATCH_GLIBC(__system_property_update);
-//DISPATCH_GLIBC(__system_property_wait_any);
-//DISPATCH_GLIBC(__timer_create);
-//DISPATCH_GLIBC(__timer_delete);
-//DISPATCH_GLIBC(__timer_getoverrun);
-//DISPATCH_GLIBC(__timer_gettime);
-//DISPATCH_GLIBC(__timer_settime);
-//DISPATCH_GLIBC(__truncdfsf2);
-//DISPATCH_GLIBC(__udivdi3);
-//DISPATCH_GLIBC(__udivsi3);
+DUMMY(__subdf3);
+DUMMY(__subsf3);
+DUMMY(__swbuf);
+DUMMY(__swrite);
+DUMMY(__swsetup);
+DUMMY(__sym_ntop);
+DUMMY(__sym_ntos);
+DUMMY(__sym_ston);
+DUMMY(__system_properties_init);
+DUMMY(__system_property_add);
+DUMMY(__system_property_area__);
+DUMMY(__system_property_area_init);
+//DUMMY(__system_property_area_serial);
+//DUMMY(__system_property_find);
+DUMMY(__system_property_find_nth);
+//DUMMY(__system_property_foreach);
+//DUMMY(__system_property_get);
+//DUMMY(__system_property_read);
+//DUMMY(__system_property_serial);
+//DUMMY(__system_property_set);
+DUMMY(__system_property_set_filename);
+DUMMY(__system_property_update);
+DUMMY(__system_property_wait_any);
+DUMMY(__timer_create);
+DUMMY(__timer_delete);
+DUMMY(__timer_getoverrun);
+DUMMY(__timer_gettime);
+DUMMY(__timer_settime);
+DUMMY(__truncdfsf2);
+DUMMY(__udivdi3);
+DUMMY(__udivsi3);
 DISPATCH_GLIBC2(__umask_chk, umask);
-//DISPATCH_GLIBC(__umoddi3);
-//DISPATCH_GLIBC(__unorddf2);
-//DISPATCH_GLIBC(__unordsf2);
-//DISPATCH_GLIBC(__vsnprintf_chk);
-//DISPATCH_GLIBC(__vsprintf_chk);
-//DISPATCH_GLIBC(__wait4);
-//DISPATCH_GLIBC(__waitid);
-//DISPATCH_GLIBC(_ctype_);
+DUMMY(__umoddi3);
+DUMMY(__unorddf2);
+DUMMY(__unordsf2);
+//DUMMY(__vsnprintf_chk);
+DUMMY(__vsprintf_chk);
+DUMMY(__wait4);
+DUMMY(__waitid);
+//DUMMY(_ctype_);
 DISPATCH_GLIBC(_Exit);
 DISPATCH_GLIBC(_exit);
-//DISPATCH_GLIBC(_flush_cache);
-//DISPATCH_GLIBC(_flushlbf);
-//DISPATCH_GLIBC(_fwalk);
-//DISPATCH_GLIBC(_getlong);
-//DISPATCH_GLIBC(_getshort);
+DUMMY(_flush_cache);
+DUMMY(_flushlbf);
+DUMMY(_fwalk);
+DUMMY(_getlong);
+DUMMY(_getshort);
 DISPATCH_SETJMP(_longjmp);
-//DISPATCH_GLIBC(_resolv_delete_cache_for_net);
-//DISPATCH_GLIBC(_resolv_flush_cache_for_net);
-//DISPATCH_GLIBC(_resolv_set_nameservers_for_net);
+DUMMY(_resolv_delete_cache_for_net);
+DUMMY(_resolv_flush_cache_for_net);
+DUMMY(_resolv_set_nameservers_for_net);
 DISPATCH_SETJMP(_setjmp);
-//DISPATCH_GLIBC(_tolower);
-//DISPATCH_GLIBC(_tolower_tab_);
-//DISPATCH_GLIBC(_toupper);
-//DISPATCH_GLIBC(_toupper_tab_);
+DUMMY(_tolower);
+DUMMY(_tolower_tab_);
+DUMMY(_toupper);
+DUMMY(_toupper_tab_);
 DISPATCH_GLIBC(abort);
 DISPATCH_GLIBC(abs);
 DISPATCH_GLIBC(accept);
-//DISPATCH_GLIBC(accept4);
+DUMMY(accept4);
 DISPATCH_GLIBC(access);
-//DISPATCH_GLIBC(acct);
+DUMMY(acct);
 DISPATCH_GLIBC(alarm);
-//DISPATCH_GLIBC(alphasort);
-//DISPATCH_GLIBC(alphasort64);
-//DISPATCH_GLIBC(android_getaddrinfofornet);
-//DISPATCH_GLIBC(android_getaddrinfofornetcontext);
-//DISPATCH_GLIBC(android_gethostbyaddrfornet);
-//DISPATCH_GLIBC(android_gethostbynamefornet);
-//DISPATCH_GLIBC(android_set_abort_message);
+DUMMY(alphasort);
+DUMMY(alphasort64);
+DUMMY(android_getaddrinfofornet);
+DUMMY(android_getaddrinfofornetcontext);
+DUMMY(android_gethostbyaddrfornet);
+DUMMY(android_gethostbynamefornet);
+//DUMMY(android_set_abort_message);
 DISPATCH_GLIBC(arc4random);
 DISPATCH_GLIBC(arc4random_addrandom);
 DISPATCH_GLIBC(arc4random_buf);
@@ -537,34 +589,34 @@ DISPATCH_GLIBC(asctime);
 DISPATCH_GLIBC(asctime64);
 DISPATCH_GLIBC(asctime64_r);
 DISPATCH_GLIBC(asctime_r);
-//DISPATCH_GLIBC(asprintf);
-//DISPATCH_GLIBC(at_quick_exit);
-//DISPATCH_GLIBC(atof);
+//DUMMY(asprintf);
+DUMMY(at_quick_exit);
+//DUMMY(atof);
 DISPATCH_GLIBC(atoi);
 DISPATCH_GLIBC(atol);
 DISPATCH_GLIBC(atoll);
-//DISPATCH_GLIBC(basename);
-//DISPATCH_GLIBC(basename_r);
-//DISPATCH_GLIBC(bcopy);
+DUMMY(basename);
+DUMMY(basename_r);
+DUMMY(bcopy);
 DISPATCH_GLIBC(bind);
-//DISPATCH_GLIBC(bindresvport);
-//DISPATCH_GLIBC(brk);
-//DISPATCH_GLIBC(bsd_signal);
+DUMMY(bindresvport);
+DUMMY(brk);
+DUMMY(bsd_signal);
 DISPATCH_GLIBC(bsearch);
 DISPATCH_GLIBC(btowc);
-//DISPATCH_GLIBC(bzero);
-//DISPATCH_GLIBC(c16rtomb);
-//DISPATCH_GLIBC(c32rtomb);
-//DISPATCH_GLIBC(cacheflush);
+DUMMY(bzero);
+DUMMY(c16rtomb);
+DUMMY(c32rtomb);
+DUMMY(cacheflush);
 DISPATCH_GLIBC(calloc);
 DISPATCH_GLIBC(capget);
 DISPATCH_GLIBC(capset);
-//DISPATCH_GLIBC(cfgetispeed);
-//DISPATCH_GLIBC(cfgetospeed);
-//DISPATCH_GLIBC(cfmakeraw);
-//DISPATCH_GLIBC(cfsetispeed);
-//DISPATCH_GLIBC(cfsetospeed);
-//DISPATCH_GLIBC(cfsetspeed);
+DUMMY(cfgetispeed);
+DUMMY(cfgetospeed);
+DUMMY(cfmakeraw);
+DUMMY(cfsetispeed);
+DUMMY(cfsetospeed);
+DUMMY(cfsetspeed);
 DISPATCH_GLIBC(chdir);
 DISPATCH_GLIBC(chmod);
 DISPATCH_GLIBC(chown);
@@ -578,55 +630,55 @@ DISPATCH_RT(clock_getres);
 DISPATCH_RT(clock_gettime);
 DISPATCH_RT(clock_nanosleep);
 DISPATCH_RT(clock_settime);
-//DISPATCH_GLIBC(clone);
+DUMMY(clone);
 DISPATCH_GLIBC(close);
 DISPATCH_GLIBC(closedir);
-//DISPATCH_GLIBC(closelog);
+//DUMMY(closelog);
 DISPATCH_GLIBC(connect);
-//DISPATCH_GLIBC(creat);
-//DISPATCH_GLIBC(creat64);
+DUMMY(creat);
+DUMMY(creat64);
 DISPATCH_GLIBC(ctime);
 DISPATCH_GLIBC(ctime64);
 DISPATCH_GLIBC(ctime64_r);
 DISPATCH_GLIBC(ctime_r);
 DISPATCH_GLIBC(daemon);
-//DISPATCH_GLIBC(daylight);
+DUMMY(daylight);
 DISPATCH_GLIBC(delete_module);
-//DISPATCH_GLIBC(difftime);
-//DISPATCH_GLIBC(dirfd);
-//DISPATCH_GLIBC(dirname);
-//DISPATCH_GLIBC(dirname_r);
-//DISPATCH_GLIBC(div);
-//DISPATCH_GLIBC(dn_expand);
-//DISPATCH_GLIBC(dprintf);
-//DISPATCH_GLIBC(drand48);
+//DUMMY(difftime);
+DUMMY(dirfd);
+DUMMY(dirname);
+DUMMY(dirname_r);
+DUMMY(div);
+DUMMY(dn_expand);
+//DUMMY(dprintf);
+//DUMMY(drand48);
 DISPATCH_GLIBC(dup);
 DISPATCH_GLIBC(dup2);
 DISPATCH_GLIBC(dup3);
-//DISPATCH_GLIBC(duplocale);
+DUMMY(duplocale);
 DISPATCH_GLIBC(endmntent);
-//DISPATCH_GLIBC(endpwent);
-//DISPATCH_GLIBC(endservent);
-//DISPATCH_GLIBC(endusershell);
-//DISPATCH_GLIBC(endutent);
-//DISPATCH_GLIBC(environ);
+DUMMY(endpwent);
+DUMMY(endservent);
+DUMMY(endusershell);
+DUMMY(endutent);
+DUMMY(environ);
 DISPATCH_GLIBC(epoll_create);
 DISPATCH_GLIBC(epoll_create1);
 DISPATCH_GLIBC(epoll_ctl);
 DISPATCH_GLIBC(epoll_pwait);
 DISPATCH_GLIBC(epoll_wait);
-//DISPATCH_GLIBC(erand48);
-//DISPATCH_GLIBC(err);
-//DISPATCH_GLIBC(error);
-//DISPATCH_GLIBC(error_at_line);
-//DISPATCH_GLIBC(error_message_count);
-//DISPATCH_GLIBC(error_one_per_line);
-//DISPATCH_GLIBC(error_print_progname);
-//DISPATCH_GLIBC(errx);
-//DISPATCH_GLIBC(ether_aton);
-//DISPATCH_GLIBC(ether_aton_r);
-//DISPATCH_GLIBC(ether_ntoa);
-//DISPATCH_GLIBC(ether_ntoa_r);
+//DUMMY(erand48);
+DUMMY(err);
+DUMMY(error);
+DUMMY(error_at_line);
+DUMMY(error_message_count);
+DUMMY(error_one_per_line);
+DUMMY(error_print_progname);
+DUMMY(errx);
+DUMMY(ether_aton);
+DUMMY(ether_aton_r);
+DUMMY(ether_ntoa);
+DUMMY(ether_ntoa_r);
 DISPATCH_GLIBC(eventfd);
 DISPATCH_GLIBC(eventfd_read);
 DISPATCH_GLIBC(eventfd_write);
@@ -639,108 +691,108 @@ DISPATCH_GLIBC(execvp);
 DISPATCH_GLIBC(execvpe);
 DISPATCH_GLIBC(exit);
 DISPATCH_GLIBC(faccessat);
-//DISPATCH_GLIBC(fake_gmtime_r);
-//DISPATCH_GLIBC(fake_localtime_r);
-//DISPATCH_GLIBC(fallocate);
-//DISPATCH_GLIBC(fallocate64);
+DUMMY(fake_gmtime_r);
+DUMMY(fake_localtime_r);
+DUMMY(fallocate);
+DUMMY(fallocate64);
 DISPATCH_GLIBC(fchdir);
 DISPATCH_GLIBC(fchmod);
 DISPATCH_GLIBC(fchmodat);
 DISPATCH_GLIBC(fchown);
 DISPATCH_GLIBC(fchownat);
-//DISPATCH_GLIBC(fclose);
+//DUMMY(fclose);
 DISPATCH_GLIBC(fcntl);
-//DISPATCH_GLIBC(fdatasync);
-//DISPATCH_GLIBC(fdopen);
-//DISPATCH_GLIBC(fdopendir);
-//DISPATCH_GLIBC(fdprintf);
-//DISPATCH_GLIBC(feof);
-//DISPATCH_GLIBC(feof_unlocked);
-//DISPATCH_GLIBC(ferror);
-//DISPATCH_GLIBC(ferror_unlocked);
-//DISPATCH_GLIBC(fflush);
-//DISPATCH_GLIBC(ffs);
-//DISPATCH_GLIBC(fgetc);
-//DISPATCH_GLIBC(fgetln);
-//DISPATCH_GLIBC(fgetpos);
-//DISPATCH_GLIBC(fgets);
-//DISPATCH_GLIBC(fgetwc);
-//DISPATCH_GLIBC(fgetws);
-//DISPATCH_GLIBC(fgetxattr);
-//DISPATCH_GLIBC(fileno);
-//DISPATCH_GLIBC(flistxattr);
-//DISPATCH_GLIBC(flock);
-//DISPATCH_GLIBC(flockfile);
-//DISPATCH_GLIBC(fmemopen);
-//DISPATCH_GLIBC(fnmatch);
-//DISPATCH_GLIBC(fopen);
+DUMMY(fdatasync);
+//DUMMY(fdopen);
+DUMMY(fdopendir);
+DUMMY(fdprintf);
+//DUMMY(feof);
+DUMMY(feof_unlocked);
+//DUMMY(ferror);
+DUMMY(ferror_unlocked);
+//DUMMY(fflush);
+DUMMY(ffs);
+//DUMMY(fgetc);
+DUMMY(fgetln);
+//DUMMY(fgetpos);
+//DUMMY(fgets);
+//DUMMY(fgetwc);
+//DUMMY(fgetws);
+DUMMY(fgetxattr);
+//DUMMY(fileno);
+DUMMY(flistxattr);
+DUMMY(flock);
+DUMMY(flockfile);
+DUMMY(fmemopen);
+DUMMY(fnmatch);
+//DUMMY(fopen);
 DISPATCH_GLIBC(fork);
-//DISPATCH_GLIBC(forkpty);
+DUMMY(forkpty);
 DISPATCH_GLIBC(fpathconf);
-//DISPATCH_GLIBC(fprintf);
-//DISPATCH_GLIBC(fpurge);
-//DISPATCH_GLIBC(fputc);
-//DISPATCH_GLIBC(fputs);
-//DISPATCH_GLIBC(fputwc);
-//DISPATCH_GLIBC(fputws);
-//DISPATCH_GLIBC(fread);
+//DUMMY(fprintf);
+DUMMY(fpurge);
+//DUMMY(fputc);
+//DUMMY(fputs);
+//DUMMY(fputwc);
+//DUMMY(fputws);
+//DUMMY(fread);
 DISPATCH_GLIBC(free);
 DUMMY(free_malloc_leak_info);
-//DISPATCH_GLIBC(freeaddrinfo);
+//DUMMY(freeaddrinfo);
 DISPATCH_GLIBC(freelocale);
-//DISPATCH_GLIBC(fremovexattr);
-//DISPATCH_GLIBC(freopen);
-//DISPATCH_GLIBC(fscanf);
-//DISPATCH_GLIBC(fseek);
-//DISPATCH_GLIBC(fseeko);
-//DISPATCH_GLIBC(fsetpos);
-//DISPATCH_GLIBC(fsetxattr);
-//DISPATCH_GLIBC(fstat);
-//DISPATCH_GLIBC(fstat64);
-//DISPATCH_GLIBC(fstatat);
-//DISPATCH_GLIBC(fstatat64);
-//DISPATCH_GLIBC(fstatfs);
+DUMMY(fremovexattr);
+//DUMMY(freopen);
+//DUMMY(fscanf);
+//DUMMY(fseek);
+//DUMMY(fseeko);
+//DUMMY(fsetpos);
+DUMMY(fsetxattr);
+//DUMMY(fstat);
+DUMMY(fstat64);
+//DUMMY(fstatat);
+DUMMY(fstatat64);
+DUMMY(fstatfs);
 DISPATCH_GLIBC(fstatfs64);
 DISPATCH_GLIBC(fstatvfs);
 DISPATCH_GLIBC(fstatvfs64);
 DISPATCH_GLIBC(fsync);
-//DISPATCH_GLIBC(ftell);
-//DISPATCH_GLIBC(ftello);
-//DISPATCH_GLIBC(ftime);
-//DISPATCH_GLIBC(ftok);
-//DISPATCH_GLIBC(ftruncate);
-//DISPATCH_GLIBC(ftruncate64);
-//DISPATCH_GLIBC(ftrylockfile);
-//DISPATCH_GLIBC(fts_children);
-//DISPATCH_GLIBC(fts_close);
-//DISPATCH_GLIBC(fts_open);
-//DISPATCH_GLIBC(fts_read);
-//DISPATCH_GLIBC(fts_set);
-//DISPATCH_GLIBC(ftw);
-//DISPATCH_GLIBC(ftw64);
-//DISPATCH_GLIBC(funlockfile);
-//DISPATCH_GLIBC(funopen);
-//DISPATCH_GLIBC(futimens);
-//DISPATCH_GLIBC(fwide);
-//DISPATCH_GLIBC(fwprintf);
-//DISPATCH_GLIBC(fwrite);
-//DISPATCH_GLIBC(fwscanf);
-//DISPATCH_GLIBC(gai_strerror);
-//DISPATCH_GLIBC(get_avphys_pages);
+//DUMMY(ftell);
+//DUMMY(ftello);
+DUMMY(ftime);
+DUMMY(ftok);
+//DUMMY(ftruncate);
+DUMMY(ftruncate64);
+DUMMY(ftrylockfile);
+DUMMY(fts_children);
+DUMMY(fts_close);
+DUMMY(fts_open);
+DUMMY(fts_read);
+DUMMY(fts_set);
+DUMMY(ftw);
+DUMMY(ftw64);
+DUMMY(funlockfile);
+//DUMMY(funopen);
+DUMMY(futimens);
+//DUMMY(fwide);
+//DUMMY(fwprintf);
+//DUMMY(fwrite);
+//DUMMY(fwscanf);
+DUMMY(gai_strerror);
+DUMMY(get_avphys_pages);
 DUMMY(get_malloc_leak_info);
-//DISPATCH_GLIBC(get_nprocs);
-//DISPATCH_GLIBC(get_nprocs_conf);
-//DISPATCH_GLIBC(get_phys_pages);
-//DISPATCH_GLIBC(getaddrinfo);
+DUMMY(get_nprocs);
+DUMMY(get_nprocs_conf);
+DUMMY(get_phys_pages);
+//DUMMY(getaddrinfo);
 DISPATCH_GLIBC(getauxval);
-//DISPATCH_GLIBC(getc);
-//DISPATCH_GLIBC(getc_unlocked);
+//DUMMY(getc);
+DUMMY(getc_unlocked);
 DISPATCH_GLIBC(getchar);
 DISPATCH_GLIBC(getchar_unlocked);
 DISPATCH_GLIBC(getcwd);
-//DISPATCH_GLIBC(getdelim);
-//DISPATCH_GLIBC(getdents);
-//DISPATCH_GLIBC(getdtablesize);
+DUMMY(getdelim);
+DUMMY(getdents);
+DUMMY(getdtablesize);
 DISPATCH_GLIBC(getegid);
 DISPATCH_GLIBC(getenv);
 DISPATCH_GLIBC(geteuid);
@@ -758,7 +810,7 @@ DISPATCH_GLIBC(gethostbyname_r);
 DISPATCH_GLIBC(gethostent);
 DISPATCH_GLIBC(gethostname);
 DISPATCH_GLIBC(getitimer);
-//DISPATCH_GLIBC(getline);
+//DUMMY(getline);
 DISPATCH_GLIBC(getlogin);
 DISPATCH_GLIBC(getmntent);
 DISPATCH_GLIBC(getmntent_r);
@@ -775,7 +827,7 @@ DISPATCH_GLIBC(getpgrp);
 DISPATCH_GLIBC(getpid);
 DISPATCH_GLIBC(getppid);
 DISPATCH_GLIBC(getpriority);
-//DISPATCH_GLIBC(getprogname);
+//DUMMY(getprogname);
 DISPATCH_GLIBC(getprotobyname);
 DISPATCH_GLIBC(getprotobynumber);
 DISPATCH_GLIBC(getpt);
@@ -795,12 +847,12 @@ DISPATCH_GLIBC(getservent);
 DISPATCH_GLIBC(getsid);
 DISPATCH_GLIBC(getsockname);
 DISPATCH_GLIBC(getsockopt);
-//DISPATCH_GLIBC(gettid);
+//DUMMY(gettid);
 DISPATCH_GLIBC(gettimeofday);
 DISPATCH_GLIBC(getuid);
 DISPATCH_GLIBC(getusershell);
 DISPATCH_GLIBC(getutent);
-//DISPATCH_GLIBC(getwc);
+//DUMMY(getwc);
 DISPATCH_GLIBC(getwchar);
 DISPATCH_GLIBC(getxattr);
 DISPATCH_GLIBC(gmtime);
@@ -808,34 +860,34 @@ DISPATCH_GLIBC(gmtime64);
 DISPATCH_GLIBC(gmtime64_r);
 DISPATCH_GLIBC(gmtime_r);
 DISPATCH_GLIBC(grantpt);
-//DISPATCH_GLIBC(herror);
-//DISPATCH_GLIBC(hstrerror);
-//DISPATCH_GLIBC(htonl);
-//DISPATCH_GLIBC(htons);
-//DISPATCH_GLIBC(if_indextoname);
+DUMMY(herror);
+DUMMY(hstrerror);
+DUMMY(htonl);
+DUMMY(htons);
+DUMMY(if_indextoname);
 DISPATCH_GLIBC(if_nametoindex);
-//DISPATCH_GLIBC(imaxabs);
-//DISPATCH_GLIBC(imaxdiv);
-//DISPATCH_GLIBC(index);
+DUMMY(imaxabs);
+DUMMY(imaxdiv);
+DUMMY(index);
 DISPATCH_GLIBC(inet_addr);
 DISPATCH_GLIBC(inet_aton);
-//DISPATCH_GLIBC(inet_lnaof);
-//DISPATCH_GLIBC(inet_makeaddr);
-//DISPATCH_GLIBC(inet_netof);
-//DISPATCH_GLIBC(inet_network);
-//DISPATCH_GLIBC(inet_nsap_addr);
-//DISPATCH_GLIBC(inet_nsap_ntoa);
+DUMMY(inet_lnaof);
+DUMMY(inet_makeaddr);
+DUMMY(inet_netof);
+DUMMY(inet_network);
+DUMMY(inet_nsap_addr);
+DUMMY(inet_nsap_ntoa);
 DISPATCH_GLIBC(inet_ntoa);
-//DISPATCH_GLIBC(inet_ntop);
-//DISPATCH_GLIBC(inet_pton);
+DUMMY(inet_ntop);
+DUMMY(inet_pton);
 DISPATCH_GLIBC(init_module);
-//DISPATCH_GLIBC(initgroups);
+DUMMY(initgroups);
 DISPATCH_GLIBC(initstate);
-//DISPATCH_GLIBC(inotify_add_watch);
-//DISPATCH_GLIBC(inotify_init);
-//DISPATCH_GLIBC(inotify_init1);
-//DISPATCH_GLIBC(inotify_rm_watch);
-//DISPATCH_GLIBC(insque);
+DUMMY(inotify_add_watch);
+DUMMY(inotify_init);
+DUMMY(inotify_init1);
+DUMMY(inotify_rm_watch);
+DUMMY(insque);
 DISPATCH_GLIBC(ioctl);
 DISPATCH_GLIBC(isalnum);
 DISPATCH_GLIBC(isalnum_l);
@@ -849,22 +901,22 @@ DISPATCH_GLIBC(iscntrl);
 DISPATCH_GLIBC(iscntrl_l);
 DISPATCH_GLIBC(isdigit);
 DISPATCH_GLIBC(isdigit_l);
-//DISPATCH_GLIBC(isfinite);
-//DISPATCH_GLIBC(isfinitef);
-//DISPATCH_GLIBC(isfinitel);
+DUMMY(isfinite);
+DUMMY(isfinitef);
+DUMMY(isfinitel);
 DISPATCH_GLIBC(isgraph);
 DISPATCH_GLIBC(isgraph_l);
-//DISPATCH_GLIBC(isinf);
-//DISPATCH_GLIBC(isinff);
-//DISPATCH_GLIBC(isinfl);
+//DUMMY(isinf);
+//DUMMY(isinff);
+//DUMMY(isinfl);
 DISPATCH_GLIBC(islower);
 DISPATCH_GLIBC(islower_l);
-//DISPATCH_GLIBC(isnan);
-//DISPATCH_GLIBC(isnanf);
-//DISPATCH_GLIBC(isnanl);
-//DISPATCH_GLIBC(isnormal);
-//DISPATCH_GLIBC(isnormalf);
-//DISPATCH_GLIBC(isnormall);
+//DUMMY(isnan);
+//DUMMY(isnanf);
+//DUMMY(isnanl);
+DUMMY(isnormal);
+DUMMY(isnormalf);
+DUMMY(isnormall);
 DISPATCH_GLIBC(isprint);
 DISPATCH_GLIBC(isprint_l);
 DISPATCH_GLIBC(ispunct);
@@ -903,43 +955,43 @@ DISPATCH_GLIBC(iswxdigit_l);
 DISPATCH_GLIBC(isxdigit);
 DISPATCH_GLIBC(isxdigit_l);
 DISPATCH_GLIBC(jrand48);
-//DISPATCH_GLIBC(kill);
-//DISPATCH_GLIBC(killpg);
-//DISPATCH_GLIBC(klogctl);
+DUMMY(kill);
+DUMMY(killpg);
+DUMMY(klogctl);
 DISPATCH_GLIBC(labs);
-//DISPATCH_GLIBC(lchown);
-//DISPATCH_GLIBC(lcong48);
-//DISPATCH_GLIBC(ldexp);
-//DISPATCH_GLIBC(ldiv);
-//DISPATCH_GLIBC(lfind);
-//DISPATCH_GLIBC(lgetxattr);
+DUMMY(lchown);
+DUMMY(lcong48);
+//DUMMY(ldexp);
+DUMMY(ldiv);
+DUMMY(lfind);
+DUMMY(lgetxattr);
 DISPATCH_GLIBC(link);
 DISPATCH_GLIBC(linkat);
 DISPATCH_GLIBC(listen);
-//DISPATCH_GLIBC(listxattr);
+DUMMY(listxattr);
 DISPATCH_GLIBC(llabs);
 DISPATCH_GLIBC(lldiv);
-//DISPATCH_GLIBC(llistxattr);
+DUMMY(llistxattr);
 DISPATCH_GLIBC(localeconv);
 DISPATCH_GLIBC(localtime);
 DISPATCH_GLIBC(localtime64);
 DISPATCH_GLIBC(localtime64_r);
 DISPATCH_GLIBC(localtime_r);
-//DISPATCH_GLIBC(login_tty);
+DUMMY(login_tty);
 DISPATCH_SETJMP(longjmp);
 DISPATCH_GLIBC(lrand48);
-//DISPATCH_GLIBC(lremovexattr);
-//DISPATCH_GLIBC(lsearch);
+DUMMY(lremovexattr);
+DUMMY(lsearch);
 DISPATCH_GLIBC(lseek);
-//DISPATCH_GLIBC(lseek64);
-//DISPATCH_GLIBC(lsetxattr);
-//DISPATCH_GLIBC(lstat);
-//DISPATCH_GLIBC(lstat64);
+DUMMY(lseek64);
+DUMMY(lsetxattr);
+//DUMMY(lstat);
+DUMMY(lstat64);
 DISPATCH_GLIBC(madvise);
 DISPATCH_GLIBC(mallinfo);
 DISPATCH_GLIBC(malloc);
-//DISPATCH_GLIBC(malloc_info);
-//DISPATCH_GLIBC(malloc_usable_size);
+DUMMY(malloc_info);
+DUMMY(malloc_usable_size);
 DISPATCH_GLIBC(mbrlen);
 DISPATCH_GLIBC(mbrtoc16);
 DISPATCH_GLIBC(mbrtoc32);
@@ -960,14 +1012,14 @@ DISPATCH_GLIBC(mempcpy);
 DISPATCH_GLIBC(memrchr);
 DISPATCH_GLIBC(memset);
 DISPATCH_GLIBC(memswap);
-//DISPATCH_GLIBC(mincore);
+DUMMY(mincore);
 DISPATCH_GLIBC(mkdir);
 DISPATCH_GLIBC(mkdirat);
 DISPATCH_GLIBC(mkdtemp);
-//DISPATCH_GLIBC(mkfifo);
-//DISPATCH_GLIBC(mkfifoat);
-//DISPATCH_GLIBC(mknod);
-//DISPATCH_GLIBC(mknodat);
+DUMMY(mkfifo);
+DUMMY(mkfifoat);
+//DUMMY(mknod);
+//DUMMY(mknodat);
 DISPATCH_GLIBC(mkostemp);
 DISPATCH_GLIBC(mkostemp64);
 DISPATCH_GLIBC(mkostemps);
@@ -978,94 +1030,94 @@ DISPATCH_GLIBC(mkstemps);
 DISPATCH_GLIBC(mkstemps64);
 DISPATCH_GLIBC(mktemp);
 DISPATCH_GLIBC(mktime);
-//DISPATCH_GLIBC(mktime64);
-//DISPATCH_GLIBC(mktime_tz);
-//DISPATCH_GLIBC(mlock);
-//DISPATCH_GLIBC(mlockall);
+DUMMY(mktime64);
+DUMMY(mktime_tz);
+DUMMY(mlock);
+DUMMY(mlockall);
 DISPATCH_GLIBC(mmap);
 DISPATCH_GLIBC(mmap64);
-//DISPATCH_GLIBC(mount);
-//DISPATCH_GLIBC(mprotect);
+DUMMY(mount);
+DISPATCH_GLIBC(mprotect);
 DISPATCH_GLIBC(mrand48);
-//DISPATCH_GLIBC(mremap);
-//DISPATCH_GLIBC(msync);
-//DISPATCH_GLIBC(munlock);
-//DISPATCH_GLIBC(munlockall);
+DUMMY(mremap);
+DUMMY(msync);
+DUMMY(munlock);
+DUMMY(munlockall);
 DISPATCH_GLIBC(munmap);
 DISPATCH_GLIBC(nanosleep);
 DISPATCH_GLIBC(newlocale);
-//DISPATCH_GLIBC(nftw);
-//DISPATCH_GLIBC(nftw64);
+DUMMY(nftw);
+DUMMY(nftw64);
 DISPATCH_GLIBC(nice);
 DISPATCH_GLIBC(nrand48);
-//DISPATCH_GLIBC(ns_format_ttl);
-//DISPATCH_GLIBC(ns_get16);
-//DISPATCH_GLIBC(ns_get32);
-//DISPATCH_GLIBC(ns_initparse);
-//DISPATCH_GLIBC(ns_makecanon);
-//DISPATCH_GLIBC(ns_msg_getflag);
-//DISPATCH_GLIBC(ns_name_compress);
-//DISPATCH_GLIBC(ns_name_ntol);
-//DISPATCH_GLIBC(ns_name_ntop);
-//DISPATCH_GLIBC(ns_name_pack);
-//DISPATCH_GLIBC(ns_name_pton);
-//DISPATCH_GLIBC(ns_name_rollback);
-//DISPATCH_GLIBC(ns_name_skip);
-//DISPATCH_GLIBC(ns_name_uncompress);
-//DISPATCH_GLIBC(ns_name_unpack);
-//DISPATCH_GLIBC(ns_parserr);
-//DISPATCH_GLIBC(ns_put16);
-//DISPATCH_GLIBC(ns_put32);
-//DISPATCH_GLIBC(ns_samename);
-//DISPATCH_GLIBC(ns_skiprr);
-//DISPATCH_GLIBC(ns_sprintrr);
-//DISPATCH_GLIBC(ns_sprintrrf);
-//DISPATCH_GLIBC(nsdispatch);
-//DISPATCH_GLIBC(ntohl);
-//DISPATCH_GLIBC(ntohs);
+DUMMY(ns_format_ttl);
+DUMMY(ns_get16);
+DUMMY(ns_get32);
+DUMMY(ns_initparse);
+DUMMY(ns_makecanon);
+DUMMY(ns_msg_getflag);
+DUMMY(ns_name_compress);
+DUMMY(ns_name_ntol);
+DUMMY(ns_name_ntop);
+DUMMY(ns_name_pack);
+DUMMY(ns_name_pton);
+DUMMY(ns_name_rollback);
+DUMMY(ns_name_skip);
+DUMMY(ns_name_uncompress);
+DUMMY(ns_name_unpack);
+DUMMY(ns_parserr);
+DUMMY(ns_put16);
+DUMMY(ns_put32);
+DUMMY(ns_samename);
+DUMMY(ns_skiprr);
+DUMMY(ns_sprintrr);
+DUMMY(ns_sprintrrf);
+DUMMY(nsdispatch);
+DUMMY(ntohl);
+DUMMY(ntohs);
 DISPATCH_GLIBC(open);
-//DISPATCH_GLIBC(open64);
-//DISPATCH_GLIBC(open_memstream);
-//DISPATCH_GLIBC(open_wmemstream);
+DUMMY(open64);
+DUMMY(open_memstream);
+DUMMY(open_wmemstream);
 DISPATCH_GLIBC(openat);
 DISPATCH_GLIBC(openat64);
 DISPATCH_GLIBC(opendir);
-//DISPATCH_GLIBC(openlog);
-//DISPATCH_GLIBC(openpty);
-//DISPATCH_GLIBC(optarg);
-//DISPATCH_GLIBC(opterr);
-//DISPATCH_GLIBC(optind);
-//DISPATCH_GLIBC(optopt);
-//DISPATCH_GLIBC(optreset);
+//DUMMY(openlog);
+DUMMY(openpty);
+DUMMY(optarg);
+DUMMY(opterr);
+DUMMY(optind);
+DUMMY(optopt);
+DUMMY(optreset);
 DISPATCH_GLIBC(pathconf);
-//DISPATCH_GLIBC(pause);
-//DISPATCH_GLIBC(pclose);
+DUMMY(pause);
+DUMMY(pclose);
 DISPATCH_GLIBC(perror);
-//DISPATCH_GLIBC(personality);
+DUMMY(personality);
 DISPATCH_GLIBC(pipe);
 DISPATCH_GLIBC(pipe2);
 DISPATCH_GLIBC(poll);
-//DISPATCH_GLIBC(popen);
-//DISPATCH_GLIBC(posix_fadvise);
-//DISPATCH_GLIBC(posix_fadvise64);
-//DISPATCH_GLIBC(posix_fallocate);
-//DISPATCH_GLIBC(posix_fallocate64);
-//DISPATCH_GLIBC(posix_madvise);
+DUMMY(popen);
+DUMMY(posix_fadvise);
+DUMMY(posix_fadvise64);
+DUMMY(posix_fallocate);
+DUMMY(posix_fallocate64);
+DUMMY(posix_madvise);
 DISPATCH_GLIBC(posix_memalign);
 DISPATCH_GLIBC(posix_openpt);
-//DISPATCH_GLIBC(ppoll);
+DUMMY(ppoll);
 DISPATCH_GLIBC(prctl);
 DISPATCH_GLIBC(pread);
 DISPATCH_GLIBC(pread64);
-//DISPATCH_GLIBC(printf);
-//DISPATCH_GLIBC(prlimit);
-//DISPATCH_GLIBC(prlimit64);
-//DISPATCH_GLIBC(process_vm_readv);
-//DISPATCH_GLIBC(process_vm_writev);
-//DISPATCH_GLIBC(pselect);
-//DISPATCH_GLIBC(psiginfo);
-//DISPATCH_GLIBC(psignal);
-//DISPATCH_GLIBC(pthread_atfork);
+//DUMMY(printf);
+DUMMY(prlimit);
+DUMMY(prlimit64);
+DUMMY(process_vm_readv);
+DUMMY(process_vm_writev);
+DUMMY(pselect);
+DUMMY(psiginfo);
+DUMMY(psignal);
+DUMMY(pthread_atfork);
 /*DISPATCH_GLIBC(pthread_attr_destroy);
 DISPATCH_GLIBC(pthread_attr_getdetachstate);
 DISPATCH_GLIBC(pthread_attr_getguardsize);
@@ -1084,16 +1136,16 @@ DISPATCH_GLIBC(pthread_attr_setscope);
 DISPATCH_GLIBC(pthread_attr_setstack);
 DISPATCH_GLIBC(pthread_attr_setstackaddr);
 DISPATCH_GLIBC(pthread_attr_setstacksize);*/
-//DISPATCH_GLIBC(pthread_cond_broadcast);
-//DISPATCH_GLIBC(pthread_cond_destroy);
-//DISPATCH_GLIBC(pthread_cond_init);
-//DISPATCH_GLIBC(pthread_cond_signal);
-//DISPATCH_GLIBC(pthread_cond_timedwait);
-//DISPATCH_GLIBC(pthread_cond_timedwait_monotonic);
-//DISPATCH_GLIBC(pthread_cond_timedwait_monotonic_np);
-//DISPATCH_GLIBC(pthread_cond_timedwait_relative_np);
-//DISPATCH_GLIBC(pthread_cond_timeout_np);
-//DISPATCH_GLIBC(pthread_cond_wait);
+//DUMMY(pthread_cond_broadcast);
+//DUMMY(pthread_cond_destroy);
+//DUMMY(pthread_cond_init);
+//DUMMY(pthread_cond_signal);
+//DUMMY(pthread_cond_timedwait);
+DUMMY(pthread_cond_timedwait_monotonic);
+DUMMY(pthread_cond_timedwait_monotonic_np);
+//DUMMY(pthread_cond_timedwait_relative_np);
+DUMMY(pthread_cond_timeout_np);
+//DUMMY(pthread_cond_wait);
 DISPATCH_PTHREAD(pthread_condattr_destroy);
 DISPATCH_PTHREAD(pthread_condattr_getclock);
 DISPATCH_PTHREAD(pthread_condattr_getpshared);
@@ -1103,22 +1155,22 @@ DISPATCH_PTHREAD(pthread_condattr_setpshared);
 DISPATCH_PTHREAD(pthread_detach);
 DISPATCH_PTHREAD(pthread_equal);
 DISPATCH_PTHREAD(pthread_exit);
-//DISPATCH_GLIBC(pthread_getattr_np);
-//DISPATCH_GLIBC(pthread_getcpuclockid);
-//DISPATCH_GLIBC(pthread_getschedparam);
+DUMMY(pthread_getattr_np);
+DUMMY(pthread_getcpuclockid);
+DUMMY(pthread_getschedparam);
 DISPATCH_PTHREAD(pthread_getspecific);
-//DISPATCH_GLIBC(pthread_gettid_np);
+//DUMMY(pthread_gettid_np);
 DISPATCH_PTHREAD(pthread_join);
 DISPATCH_RT(pthread_key_create);
 DISPATCH_PTHREAD(pthread_key_delete);
 DISPATCH_PTHREAD(pthread_kill);
-//DISPATCH_GLIBC(pthread_mutex_destroy);
-//DISPATCH_GLIBC(pthread_mutex_init);
-//DISPATCH_GLIBC(pthread_mutex_lock);
-//DISPATCH_GLIBC(pthread_mutex_lock_timeout_np);
-//DISPATCH_GLIBC(pthread_mutex_timedlock);
-//DISPATCH_GLIBC(pthread_mutex_trylock);
-//DISPATCH_GLIBC(pthread_mutex_unlock);
+//DUMMY(pthread_mutex_destroy);
+//DUMMY(pthread_mutex_init);
+//DUMMY(pthread_mutex_lock);
+DUMMY(pthread_mutex_lock_timeout_np);
+DUMMY(pthread_mutex_timedlock);
+//DUMMY(pthread_mutex_trylock);
+//DUMMY(pthread_mutex_unlock);
 DISPATCH_PTHREAD(pthread_mutexattr_destroy);
 DISPATCH_PTHREAD(pthread_mutexattr_getpshared);
 DISPATCH_PTHREAD(pthread_mutexattr_gettype);
@@ -1142,10 +1194,10 @@ DISPATCH_PTHREAD(pthread_rwlockattr_init);
 DISPATCH_PTHREAD(pthread_rwlockattr_setkind_np);
 DISPATCH_PTHREAD(pthread_rwlockattr_setpshared);
 DISPATCH_GLIBC(pthread_self);
-//DISPATCH_GLIBC(pthread_setname_np);
-//DISPATCH_GLIBC(pthread_setschedparam);
+DUMMY(pthread_setname_np);
+DUMMY(pthread_setschedparam);
 DISPATCH_RT(pthread_setspecific);
-//DISPATCH_GLIBC(pthread_sigmask);
+DUMMY(pthread_sigmask);
 DISPATCH_GLIBC(ptrace);
 DISPATCH_GLIBC(ptsname);
 DISPATCH_GLIBC(ptsname_r);
@@ -1155,56 +1207,56 @@ DISPATCH_GLIBC(putchar);
 DISPATCH_GLIBC(putchar_unlocked);
 DISPATCH_GLIBC(putenv);
 DISPATCH_GLIBC(puts);
-//DISPATCH_GLIBC(pututline);
-//DISPATCH_GLIBC(putw);
-//DISPATCH_GLIBC(putwc);
+DUMMY(pututline);
+DUMMY(putw);
+//DUMMY(putwc);
 DISPATCH_GLIBC(putwchar);
-//DISPATCH_GLIBC(pvalloc);
-//DISPATCH_GLIBC(pwrite);
-//DISPATCH_GLIBC(pwrite64);
+DUMMY(pvalloc);
+DUMMY(pwrite);
+DUMMY(pwrite64);
 DISPATCH_GLIBC(qsort);
-//DISPATCH_GLIBC(quick_exit);
+DUMMY(quick_exit);
 DISPATCH_GLIBC(raise);
 DISPATCH_GLIBC(rand);
 DISPATCH_GLIBC(rand_r);
 DISPATCH_GLIBC(random);
 DISPATCH_GLIBC(read);
-//DISPATCH_GLIBC(readahead);
-//DISPATCH_GLIBC(readdir);
-//DISPATCH_GLIBC(readdir64);
-//DISPATCH_GLIBC(readdir64_r);
-//DISPATCH_GLIBC(readdir_r);
+DUMMY(readahead);
+//DUMMY(readdir);
+DUMMY(readdir64);
+DUMMY(readdir64_r);
+//DUMMY(readdir_r);
 DISPATCH_GLIBC(readlink);
-//DISPATCH_GLIBC(readlinkat);
-//DISPATCH_GLIBC(readv);
+DUMMY(readlinkat);
+DUMMY(readv);
 DISPATCH_GLIBC(realloc);
 DISPATCH_GLIBC(realpath);
 DISPATCH_GLIBC(reboot);
-//DISPATCH_GLIBC(recv);
+DUMMY(recv);
 DISPATCH_GLIBC(recvfrom);
 DISPATCH_GLIBC(recvmmsg);
 DISPATCH_GLIBC(recvmsg);
-//DISPATCH_GLIBC(regcomp);
-//DISPATCH_GLIBC(regerror);
-//DISPATCH_GLIBC(regexec);
-//DISPATCH_GLIBC(regfree);
-//DISPATCH_GLIBC(remove);
-//DISPATCH_GLIBC(removexattr);
-//DISPATCH_GLIBC(remque);
+DUMMY(regcomp);
+DUMMY(regerror);
+DUMMY(regexec);
+DUMMY(regfree);
+DUMMY(remove);
+DUMMY(removexattr);
+DUMMY(remque);
 DISPATCH_GLIBC(rename);
 DISPATCH_GLIBC(renameat);
-//DISPATCH_GLIBC(res_init);
-//DISPATCH_GLIBC(res_mkquery);
-//DISPATCH_GLIBC(res_query);
-//DISPATCH_GLIBC(res_search);
-//DISPATCH_GLIBC(restore_core_regs);
-//DISPATCH_GLIBC(rewind);
-//DISPATCH_GLIBC(rewinddir);
+DUMMY(res_init);
+DUMMY(res_mkquery);
+DUMMY(res_query);
+DUMMY(res_search);
+DUMMY(restore_core_regs);
+//DUMMY(rewind);
+DUMMY(rewinddir);
 DISPATCH_GLIBC(rmdir);
-//DISPATCH_GLIBC(sbrk);
-//DISPATCH_GLIBC(scandir);
-//DISPATCH_GLIBC(scandir64);
-//DISPATCH_GLIBC(scanf);
+DUMMY(sbrk);
+DUMMY(scandir);
+DUMMY(scandir64);
+//DUMMY(scanf);
 DISPATCH_GLIBC(sched_get_priority_max);
 DISPATCH_GLIBC(sched_get_priority_min);
 DISPATCH_GLIBC(sched_getaffinity);
@@ -1217,7 +1269,7 @@ DISPATCH_GLIBC(sched_setparam);
 DISPATCH_GLIBC(sched_setscheduler);
 DISPATCH_GLIBC(sched_yield);
 DISPATCH_GLIBC(seed48);
-//DISPATCH_GLIBC(seekdir);
+DUMMY(seekdir);
 DISPATCH_GLIBC(select);
 DISPATCH_PTHREAD(sem_close);
 DISPATCH_PTHREAD(sem_destroy);
@@ -1255,7 +1307,7 @@ DISPATCH_GLIBC(setns);
 DISPATCH_GLIBC(setpgid);
 DISPATCH_GLIBC(setpgrp);
 DISPATCH_GLIBC(setpriority);
-//DISPATCH_GLIBC(setprogname);
+//DUMMY(setprogname);
 DISPATCH_GLIBC(setregid);
 DISPATCH_GLIBC(setresgid);
 DISPATCH_GLIBC(setresuid);
@@ -1273,46 +1325,48 @@ DISPATCH_GLIBC(setutent);
 DISPATCH_GLIBC(setvbuf);
 DISPATCH_GLIBC(setxattr);
 DISPATCH_GLIBC(shutdown);
-DISPATCH_SETJMP(sigaction);
-DISPATCH_SETJMP(sigaddset);
-DISPATCH_SETJMP(sigaltstack);
-DISPATCH_SETJMP(sigblock);
-DISPATCH_SETJMP(sigdelset);
-DISPATCH_SETJMP(sigemptyset);
-DISPATCH_SETJMP(sigfillset);
-DISPATCH_SETJMP(siginterrupt);
-DISPATCH_SETJMP(sigismember);
-DISPATCH_SETJMP(siglongjmp);
-DISPATCH_SETJMP(signal);
-DISPATCH_SETJMP(signalfd);
-DISPATCH_SETJMP(sigpending);
-DISPATCH_SETJMP(sigprocmask);
-DISPATCH_SETJMP(sigqueue);
-DISPATCH_SETJMP(sigsetjmp);
-DISPATCH_SETJMP(sigsetmask);
-DISPATCH_SETJMP(sigsuspend);
-DISPATCH_SETJMP(sigtimedwait);
-DISPATCH_SETJMP(sigwait);
-DISPATCH_SETJMP(sigwaitinfo);
+// TODO These sig functions were changed from SETJMP to GLIBC
+DISPATCH_GLIBC(sigaction);
+DISPATCH_GLIBC(sigaddset);
+DISPATCH_GLIBC(sigaltstack);
+DISPATCH_GLIBC(sigblock);
+DISPATCH_GLIBC(sigdelset);
+DISPATCH_GLIBC(sigemptyset);
+DISPATCH_GLIBC(sigfillset);
+DISPATCH_GLIBC(siginterrupt);
+DISPATCH_GLIBC(sigismember);
+DISPATCH_GLIBC(siglongjmp);
+DISPATCH_GLIBC(signal);
+DISPATCH_GLIBC(signalfd);
+DISPATCH_GLIBC(sigpending);
+DISPATCH_GLIBC(sigprocmask);
+DISPATCH_GLIBC(sigqueue);
+DISPATCH_GLIBC(sigsetjmp);
+DISPATCH_GLIBC(sigsetmask);
+DISPATCH_GLIBC(sigsuspend);
+DISPATCH_GLIBC(sigtimedwait);
+DISPATCH_GLIBC(sigwait);
+DISPATCH_GLIBC(sigwaitinfo);
+
 DISPATCH_GLIBC(sleep);
-//DISPATCH_GLIBC(snprintf);
+//DUMMY(snprintf);
 DISPATCH_GLIBC(socket);
 DISPATCH_GLIBC(socketpair);
-//DISPATCH_GLIBC(splice);
-//DISPATCH_GLIBC(sprintf);
+DUMMY(splice);
+//DUMMY(sprintf);
 DISPATCH_GLIBC(srand);
 DISPATCH_GLIBC(srand48);
 DISPATCH_GLIBC(srandom);
-//DISPATCH_GLIBC(sscanf);
-//DISPATCH_GLIBC(stat);
+//DUMMY(sscanf);
+//DUMMY(stat);
 DISPATCH_GLIBC(stat64);
 DISPATCH_GLIBC(statfs);
 DISPATCH_GLIBC(statfs64);
 DISPATCH_GLIBC(statvfs);
 DISPATCH_GLIBC(statvfs64);
-//DISPATCH_GLIBC(stderr);
-//DISPATCH_GLIBC(stdin);
-//DISPATCH_GLIBC(stdout);
+//DUMMY(stderr);
+//DUMMY(stdin);
+//DUMMY(stdout);
 DISPATCH_GLIBC(stpcpy);
 DISPATCH_GLIBC(stpncpy);
 DISPATCH_GLIBC(strcasecmp);
@@ -1331,8 +1385,8 @@ DISPATCH_GLIBC(strerror_l);
 DISPATCH_GLIBC(strerror_r);
 DISPATCH_GLIBC(strftime);
 DISPATCH_GLIBC(strftime_l);
-//DISPATCH_GLIBC(strlcat);
-//DISPATCH_GLIBC(strlcpy);
+//DUMMY(strlcat);
+//DUMMY(strlcpy);
 DISPATCH_GLIBC(strlen);
 DISPATCH_GLIBC(strncasecmp);
 DISPATCH_GLIBC(strncasecmp_l);
@@ -1350,14 +1404,14 @@ DISPATCH_GLIBC(strsep);
 DISPATCH_GLIBC(strsignal);
 DISPATCH_GLIBC(strspn);
 DISPATCH_GLIBC(strstr);
-//DISPATCH_GLIBC(strtod);
-//DISPATCH_GLIBC(strtof);
+//DUMMY(strtod);
+//DUMMY(strtof);
 DISPATCH_GLIBC(strtoimax);
 DISPATCH_GLIBC(strtok);
 DISPATCH_GLIBC(strtok_r);
 DISPATCH_GLIBC(strtol);
-//DISPATCH_GLIBC(strtold);
-//DISPATCH_GLIBC(strtold_l);
+//DUMMY(strtold);
+//DUMMY(strtold_l);
 DISPATCH_GLIBC(strtoll);
 DISPATCH_GLIBC(strtoll_l);
 DISPATCH_GLIBC(strtoq);
@@ -1369,37 +1423,37 @@ DISPATCH_GLIBC(strtoumax);
 DISPATCH_GLIBC(strtouq);
 DISPATCH_GLIBC(strxfrm);
 DISPATCH_GLIBC(strxfrm_l);
-//DISPATCH_GLIBC(swapoff);
-//DISPATCH_GLIBC(swapon);
-//DISPATCH_GLIBC(swprintf);
-//DISPATCH_GLIBC(swscanf);
-//DISPATCH_GLIBC(symlink);
-//DISPATCH_GLIBC(symlinkat);
+DUMMY(swapoff);
+DUMMY(swapon);
+//DUMMY(swprintf);
+//DUMMY(swscanf);
+DUMMY(symlink);
+DUMMY(symlinkat);
 DISPATCH_GLIBC(sync);
-//DISPATCH_GLIBC(sys_siglist);
-//DISPATCH_GLIBC(sys_signame);
+DUMMY(sys_siglist);
+DUMMY(sys_signame);
 DISPATCH_GLIBC(syscall);
-//DISPATCH_GLIBC(sysconf);
+//DUMMY(sysconf);
 DISPATCH_GLIBC(sysinfo);
-//DISPATCH_GLIBC(syslog);
+//DUMMY(syslog);
 DISPATCH_GLIBC(system);
-//DISPATCH_GLIBC(sysv_signal);
-//DISPATCH_GLIBC(tcdrain);
-//DISPATCH_GLIBC(tcflow);
-//DISPATCH_GLIBC(tcflush);
+DUMMY(sysv_signal);
+DUMMY(tcdrain);
+DUMMY(tcflow);
+DUMMY(tcflush);
 DISPATCH_GLIBC(tcgetattr);
-//DISPATCH_GLIBC(tcgetpgrp);
-//DISPATCH_GLIBC(tcgetsid);
-//DISPATCH_GLIBC(tcsendbreak);
+DUMMY(tcgetpgrp);
+DUMMY(tcgetsid);
+DUMMY(tcsendbreak);
 DISPATCH_GLIBC(tcsetattr);
-//DISPATCH_GLIBC(tcsetpgrp);
-//DISPATCH_GLIBC(tdelete);
-//DISPATCH_GLIBC(tdestroy);
-//DISPATCH_GLIBC(tee);
-//DISPATCH_GLIBC(telldir);
-//DISPATCH_GLIBC(tempnam);
-//DISPATCH_GLIBC(tfind);
-//DISPATCH_GLIBC(tgkill);
+DUMMY(tcsetpgrp);
+DUMMY(tdelete);
+DUMMY(tdestroy);
+DUMMY(tee);
+DUMMY(telldir);
+DUMMY(tempnam);
+DUMMY(tfind);
+//DUMMY(tgkill);
 DISPATCH_GLIBC(time);
 DISPATCH_GLIBC(timegm);
 DISPATCH_GLIBC(timegm64);
@@ -1415,7 +1469,7 @@ DISPATCH_GLIBC(timerfd_gettime);
 DISPATCH_GLIBC(timerfd_settime);
 DISPATCH_GLIBC(times);
 DISPATCH_GLIBC(timezone);
-//DISPATCH_GLIBC(tkill);
+DUMMY(tkill);
 DISPATCH_GLIBC(tmpfile);
 DISPATCH_GLIBC(tmpnam);
 DISPATCH_GLIBC(toascii);
@@ -1427,61 +1481,61 @@ DISPATCH_GLIBC(towlower);
 DISPATCH_GLIBC(towlower_l);
 DISPATCH_GLIBC(towupper);
 DISPATCH_GLIBC(towupper_l);
-//DISPATCH_GLIBC(truncate);
-//DISPATCH_GLIBC(truncate64);
-//DISPATCH_GLIBC(tsearch);
-//DISPATCH_GLIBC(ttyname);
-//DISPATCH_GLIBC(ttyname_r);
-//DISPATCH_GLIBC(twalk);
+DUMMY(truncate);
+DUMMY(truncate64);
+DUMMY(tsearch);
+DUMMY(ttyname);
+DUMMY(ttyname_r);
+DUMMY(twalk);
 DISPATCH_GLIBC(tzname);
 DISPATCH_GLIBC(tzset);
 DISPATCH_GLIBC(umask);
-//DISPATCH_GLIBC(umount);
-//DISPATCH_GLIBC(umount2);
+DUMMY(umount);
+DUMMY(umount2);
 DISPATCH_GLIBC(uname);
-//DISPATCH_GLIBC(ungetc);
-//DISPATCH_GLIBC(ungetwc);
+//DUMMY(ungetc);
+DUMMY(ungetwc);
 DISPATCH_GLIBC(unlink);
 DISPATCH_GLIBC(unlinkat);
 DISPATCH_GLIBC(unlockpt);
 DISPATCH_GLIBC(unsetenv);
-//DISPATCH_GLIBC(unshare);
+DUMMY(unshare);
 DISPATCH_GLIBC(uselocale);
 DISPATCH_GLIBC(usleep);
-//DISPATCH_GLIBC(utime);
-//DISPATCH_GLIBC(utimensat);
-//DISPATCH_GLIBC(utimes);
-//DISPATCH_GLIBC(utmpname);
-//DISPATCH_GLIBC(valloc);
-//DISPATCH_GLIBC(vasprintf);
-//DISPATCH_GLIBC(vdprintf);
-//DISPATCH_GLIBC(verr);
-//DISPATCH_GLIBC(verrx);
-//DISPATCH_GLIBC(vfdprintf);
+DUMMY(utime);
+DUMMY(utimensat);
+DUMMY(utimes);
+DUMMY(utmpname);
+DUMMY(valloc);
+//DUMMY(vasprintf);
+//DUMMY(vdprintf);
+DUMMY(verr);
+DUMMY(verrx);
+DUMMY(vfdprintf);
 DISPATCH_GLIBC(vfork);
-//DISPATCH_GLIBC(vfprintf);
-//DISPATCH_GLIBC(vfscanf);
-//DISPATCH_GLIBC(vfwprintf);
-//DISPATCH_GLIBC(vfwscanf);
-//DISPATCH_GLIBC(vmsplice);
-//DISPATCH_GLIBC(vprintf);
-//DISPATCH_GLIBC(vscanf);
-//DISPATCH_GLIBC(vsnprintf);
-//DISPATCH_GLIBC(vsprintf);
-//DISPATCH_GLIBC(vswprintf);
-//DISPATCH_GLIBC(vswscanf);
-//DISPATCH_GLIBC(vsyslog);
-//DISPATCH_GLIBC(vwarn);
-//DISPATCH_GLIBC(vwarnx);
-//DISPATCH_GLIBC(vwprintf);
-//DISPATCH_GLIBC(vwscanf);
-//DISPATCH_GLIBC(wait);
-//DISPATCH_GLIBC(wait3);
-//DISPATCH_GLIBC(wait4);
-//DISPATCH_GLIBC(waitid);
+//DUMMY(vfprintf);
+//DUMMY(vfscanf);
+//DUMMY(vfwprintf);
+//DUMMY(vfwscanf);
+DUMMY(vmsplice);
+//DUMMY(vprintf);
+//DUMMY(vscanf);
+//DUMMY(vsnprintf);
+//DUMMY(vsprintf);
+//DUMMY(vswprintf);
+//DUMMY(vswscanf);
+DUMMY(vsyslog);
+DUMMY(vwarn);
+DUMMY(vwarnx);
+//DUMMY(vwprintf);
+//DUMMY(vwscanf);
+DUMMY(wait);
+DUMMY(wait3);
+DUMMY(wait4);
+DUMMY(waitid);
 DISPATCH_GLIBC(waitpid);
-//DISPATCH_GLIBC(warn);
-//DISPATCH_GLIBC(warnx);
+DUMMY(warn);
+DUMMY(warnx);
 DISPATCH_GLIBC(wcpcpy);
 DISPATCH_GLIBC(wcpncpy);
 DISPATCH_GLIBC(wcrtomb);
@@ -1511,13 +1565,13 @@ DISPATCH_GLIBC(wcsrchr);
 DISPATCH_GLIBC(wcsrtombs);
 DISPATCH_GLIBC(wcsspn);
 DISPATCH_GLIBC(wcsstr);
-//DISPATCH_GLIBC(wcstod);
-//DISPATCH_GLIBC(wcstof);
+//DUMMY(wcstod);
+//DUMMY(wcstof);
 DISPATCH_GLIBC(wcstoimax);
 DISPATCH_GLIBC(wcstok);
 DISPATCH_GLIBC(wcstol);
-//DISPATCH_GLIBC(wcstold);
-//DISPATCH_GLIBC(wcstold_l);
+//DUMMY(wcstold);
+//DUMMY(wcstold_l);
 DISPATCH_GLIBC(wcstoll);
 DISPATCH_GLIBC(wcstoll_l);
 DISPATCH_GLIBC(wcstombs);
@@ -1540,83 +1594,9 @@ DISPATCH_GLIBC(wmemcpy);
 DISPATCH_GLIBC(wmemmove);
 DISPATCH_GLIBC(wmempcpy);
 DISPATCH_GLIBC(wmemset);
-//DISPATCH_GLIBC(wprintf);
+//DUMMY(wprintf);
 DISPATCH_GLIBC(write);
 DISPATCH_GLIBC(writev);
-//DISPATCH_GLIBC(wscanf);
-
-// syscalls
-
-#include <sys/syscall.h>
-
-int fstat(int fd, struct stat *buf)
-{
-    return glibc_syscall(__NR_fstat, fd, buf);
-}
-
-int lstat(int fd, struct stat *buf)
-{
-    return glibc_syscall(__NR_lstat, fd, buf);
-}
-
-int fstatat(int a, const char *p, void *b, int x)
-{
-    return glibc_syscall(__NR_fstatat64, a, p, b, x);
-}
-
-int stat(const char *path, struct stat *buf)
-{
-    return fstatat(AT_FDCWD, path, buf, 0);
-}
-
-int __signalfd4(int fd, void* mask, size_t sizemask, int flags)
-{
-    return glibc_syscall(__NR_signalfd4, fd, mask, sizemask, flags);
-}
-
-int mknodat(int dirfd, const char *pathname, mode_t mode, void *dev)
-{
-    return glibc_syscall(__NR_mknodat, dirfd, pathname, mode, dev);
-}
-
-int mknod(const char* path, mode_t mode, void *dev) {
-    return mknodat(AT_FDCWD, path, mode, dev);
-}
-
-int tgkill(pid_t tgid, pid_t tid, int sig)
-{
-    return glibc_syscall(__NR_tgkill, tgid, tid, sig);
-}
-
-int __rt_sigprocmask(int a, const void *b, void *c, size_t d)
-{
-    return glibc_syscall(__NR_rt_sigprocmask, a, b, c, d);
-}
-
-int __rt_sigtimedwait(const void* uthese, void* uinfo, const struct timespec* uts, size_t sigsetsize)
-{
-    return glibc_syscall(__NR_rt_sigtimedwait, uthese, uinfo, uts, sigsetsize);
-}
-
-int __rt_sigpending(const void* a, size_t b)
-{
-    return glibc_syscall(__NR_rt_sigpending, a, b);
-}
-
-int __rt_sigsuspend(const void *a, size_t b)
-{
-    return glibc_syscall(__NR_rt_sigsuspend, a, b);
-}
-
-int fcntl64(int a, int b, void *c)
-{
-    return glibc_syscall(__NR_fcntl64, a, b, c);
-}
-
-pid_t gettid(void)
-{
-    return glibc_syscall(__NR_gettid);
-}
-
+//DUMMY(wscanf);
 }
 

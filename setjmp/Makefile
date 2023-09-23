@@ -1,22 +1,22 @@
-OUT         := libdl.so
-SRC         := dl.c#\
-#				glibcdl.c
+OUT         := libsetjmp.so
+SRC         := errno_internal.c  __restore.S           setjmp.h  sigaction.cpp  sigblock.c     sigemptyset.cpp  siginterrupt.c   signal.cpp    sigpending.cpp   sigqueue.cpp  sigsuspend.cpp    sigwait.cpp \
+assert.cpp         ___rt_sigqueueinfo.S  setjmp.S  sigaddset.cpp  sigdelset.cpp  sigfillset.cpp   sigismember.cpp  signalfd.cpp  sigprocmask.cpp  sigsetmask.c  sigtimedwait.cpp  sigwaitinfo.cpp
 
 OBJ         := $(patsubst %.c, %.o, $(filter %.c, $(SRC)))
 OBJ         += $(patsubst %.cpp, %.o, $(filter %.cpp, $(SRC)))
 DEP         := $(OBJ:.o=.d)
 
-CFLAGS      := -Wall -I/opt/libhybris/include -L/opt/libhybris/lib
-CXXFLAGS    := -Wall -Werror -I/opt/libhybris/include -L/opt/libhybris/lib
-LDFLAGS     := -nostdlib -shared -Wl,--version-script=libdl.map -Wl,--hash-style=sysv -L/opt/libhybris/lib
-LDLIBS      := -lhybris-common
+CFLAGS      := -Wall
+CXXFLAGS    := -Wall -Werror
+LDFLAGS     := -nostdlib -shared -Wl,--hash-style=sysv
+LDLIBS      := 
 
 DEBUG       ?= 0
 VERBOSE     ?= 0
 
 ifeq ($(DEBUG),1)
-	CFLAGS += -O0 -g3 -ggdb -DDEBUG=1
-	CXXFLAGS += -O0 -g3 -ggdb -DDEBUG=1
+	CFLAGS += -O0 -g -ggdb -DDEBUG=1
+	CXXFLAGS += -O0 -g -ggdb -DDEBUG=1
 	LDFLAGS +=
 endif
 
@@ -41,8 +41,6 @@ clean:
 $(OUT): $(OBJ)
 	$(MSG) -e "\tLINK\t$@"
 	$(CMD)$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
-	@echo "WARNING: Removing hardfp abi tag (not warning about the fact, warning about the method)"
-	$(CMD)sed -i "0,/\x02\x04\x00\x05/ s/\x02\x04\x00\x05/\x00\x00\x00\x05/" $(OUT)
 	$(CMD)strip $(OUT)
 
 %.o: %.c %.d
